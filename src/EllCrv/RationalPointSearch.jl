@@ -207,7 +207,7 @@ function prime_check_arrays(coeff::Vector{<: IntegerUnion}, p::Int, N)
     if p<N
       p_chunks = div(N, p)
       if p_chunks == 1
-        chunk = append!(chunk, chunk)
+        chunk = append!(copy(chunk), chunk)
       else
         chunk = reduce(vcat, [chunk for tt in 1:p_chunks + 1])
       end
