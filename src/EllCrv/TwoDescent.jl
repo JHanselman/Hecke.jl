@@ -9,6 +9,41 @@
 
 export quartic_I_invariant, quartic_J_invariant, quartic_p_seminvariant, quartic_q_seminvariant, quartic_r_seminvariant, quartic_g4_covariant, quartic_g6_covariant
 
+function two_selmer_group(E::EllCrv{T}) where T <: Union{fmpq, nf_elem}
+  E, phi = short_weierstrass_model(E)
+  E, psi = integral_model(E)
+  
+  P, _ = hyperelliptic_polynomials(E)
+  dP = derivative(P)
+  
+  K = base_field(E)
+  a = gen(K)
+  L, theta = number_field(f, "theta")
+  OK = ring_of_integers(K)
+  OL = ring_of_integers(L)
+  disc = OK(discriminant(f))*OK
+  
+  p_inK = [f for (f,e) in factor(disc) if e >2]
+  
+  S = []
+  
+  dP_theta = dP(theta)
+  
+  for p in p_inK
+    for (p_L, e) in factor(p*OL)
+      if (dP_theta in p_L)
+        push!(S_finite, p_L)
+      end
+    end
+  end
+  
+  UL = sunit_group(S_finite)
+  
+  
+  
+end
+
+
 function quartic_I_invariant(q)
   a, b, c, d, e = quartic_coeffs(q)
   return 12*a*e - 3*b*d + c^2
