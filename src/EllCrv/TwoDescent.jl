@@ -23,16 +23,18 @@ function two_selmer_group(E::EllCrv{T}) where T <: Union{fmpq, nf_elem}
   OL = ring_of_integers(L)
   disc = OK(discriminant(f))*OK
   
+  #For every prime p in OK such that p^2 divides disc(E)
   p_inK = [f for (f,e) in factor(disc) if e >2]
   
   S = []
   
   dP_theta = dP(theta)
   
+  #Take all primes q above p in OL
   for p in p_inK
-    for (p_L, e) in factor(p*OL)
-      if (dP_theta in p_L)
-        push!(S_finite, p_L)
+    for (q, e) in factor(p*OL)
+      if (dP_theta in q)
+        push!(S_finite, q)
       end
     end
   end
