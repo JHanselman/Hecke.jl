@@ -1,4 +1,6 @@
-export FfOrdFracIdl
+export GenOrdFracIdl
+
+fractional_ideal(h::GenOrdIdl) = GenOrdFracIdl
 
 ################################################################################
 #
@@ -6,50 +8,9 @@ export FfOrdFracIdl
 #
 ################################################################################
 
-mutable struct FfOrdFracIdl
-  order::GenOrd
-  num::FfOrdIdl
-  den::RingElem
-  norm::RingElem
-  basis_matrix::FakeFracFldMat
-  basis_mat_inv::FakeFracFldMat
+Hecke.order(a::GenOrdFracIdl) = a.order
 
-  function FfOrdFracIdl(O::GenOrd)
-    z = new()
-    z.order = O
-    return z
-  end
-
-  function FfOrdFracIdl(a::FfOrdIdl, b::RingElem)
-    z = new()
-    z.order = order(a)
-    b = Hecke.AbstractAlgebra.MPolyFactor.make_monic(b)
-    z.num = a
-    z.den = b
-    return z
-  end
-
-   function FfOrdFracIdl(a::FfOrdIdl)
-    z = new()
-    O = order(a)
-    z.order = order(a)
-    z.num = a
-    z.den = O.R(1)
-    return z
-  end
-
-
-  function FfOrdFracIdl(O::GenOrd, a::FakeFracFldMat)
-    z = new()
-    z.order = O
-    z.basis_matrix = a
-    return z
-  end
-end
-
-Hecke.order(a::FfOrdFracIdl) = a.order
-
-function AbstractAlgebra.iszero(x::FfOrdFracIdl)
+function AbstractAlgebra.iszero(x::GenOrdFracIdl)
   return iszero(numerator(x))
 end
 
@@ -59,7 +20,7 @@ end
 #
 ################################################################################
 
-function assure_has_basis_matrix(a::FfOrdFracIdl)
+function assure_has_basis_matrix(a::GenOrdFracIdl)
   if isdefined(a, :basis_matrix)
     return nothing
   end
@@ -71,7 +32,7 @@ function assure_has_basis_matrix(a::FfOrdFracIdl)
   return nothing
 end
 
-function Hecke.basis_matrix(x::FfOrdFracIdl; copy::Bool = true)
+function Hecke.basis_matrix(x::GenOrdFracIdl; copy::Bool = true)
   assure_has_basis_matrix(x)
   if copy
     return deepcopy(x.basis_matrix)
@@ -88,11 +49,11 @@ end
 ################################################################################
 
 @doc Markdown.doc"""
-    basis(I::FfOrdFracIdl) -> Vector{FunFieldElem}
+    basis(I::GenOrdFracIdl) -> Vector{FunFieldElem}
 
 Returns the basis over the maximal Order of $I$.
 """
-function basis(a::FfOrdFracIdl) 
+function basis(a::GenOrdFracIdl) 
   B = basis_matrix(a)
   d = degree(order(a))
   O = order(a)
@@ -118,7 +79,7 @@ end
 #
 ################################################################################
 
-function assure_has_numerator_and_denominator(a::FfOrdFracIdl)
+function assure_has_numerator_and_denominator(a::GenOrdFracIdl)
   if isdefined(a, :num) && isdefined(a, :den)
     return nothing
   end
@@ -126,21 +87,18 @@ function assure_has_numerator_and_denominator(a::FfOrdFracIdl)
     error("Not a valid fractional ideal")
   end
 
-  a.num = FfOrdIdl(order(a), numerator(basis_matrix(a, copy = false)))
-  a.den = denominator(basis_matrix(a, copy = false))
+  B, d = integral_split(basis_matrix(a, copy = false), coefficient_ring(order(a)))
+  a.num = GenOrdIdl(order(a), B)
+  a.den = d
   return nothing
 end
 
-function Base.numerator(x::FfOrdFracIdl; copy::Bool = true)
+function Base.numerator(x::GenOrdFracIdl; copy::Bool = true)
   assure_has_numerator_and_denominator(x)
-  if copy
-    return deepcopy(x.num)
-  else
-    return x.num
-  end
+  return x.num
 end
 
-function Base.denominator(x::FfOrdFracIdl; copy::Bool = true)
+function Base.denominator(x::GenOrdFracIdl; copy::Bool = true)
   assure_has_numerator_and_denominator(x)
   if copy
     return deepcopy(x.den)
@@ -158,12 +116,12 @@ end
 ################################################################################
 
 
-function Base.prod(a::T, b::T) where T <: FfOrdFracIdl
+function Base.prod(a::T, b::T) where T <: GenOrdFracIdl
   A = numerator(a)*numerator(b)
-  return FfOrdFracIdl(A, denominator(a)*denominator(b))
+  return GenOrdFracIdl(A, denominator(a)*denominator(b))
 end
 
-Base.:*(A::T, B::T) where T <: FfOrdFracIdl = prod(A, B)
+Base.:*(A::T, B::T) where T <: GenOrdFracIdl = prod(A, B)
 
 
 ################################################################################
@@ -172,11 +130,11 @@ Base.:*(A::T, B::T) where T <: FfOrdFracIdl = prod(A, B)
 #
 ################################################################################
 
-function Base.:^(A::FfOrdFracIdl, a::Int)
+function Base.:^(A::GenOrdFracIdl, a::Int)
 
   O = order(A)
   if a == 0
-    B = FfOrdFracIdl(ideal(order(A), 1), O.R(1))
+    B = GenOrdFracIdl(ideal(order(A), 1), O.R(1))
     return B
   end
 
@@ -207,7 +165,7 @@ end
 ################################################################################
 
 
-function Hecke.simplify(A::FfOrdFracIdl)
+function Hecke.simplify(A::GenOrdFracIdl)
   assure_has_numerator_and_denominator(A)
   if isone(A.den)
     return A
@@ -230,9 +188,9 @@ end
 #
 ################################################################################
 
-Hecke.is_integral(I::FfOrdIdl) = true
+Hecke.is_integral(I::GenOrdIdl) = true
 
-function Hecke.is_integral(I::FfOrdFracIdl)
+function Hecke.is_integral(I::GenOrdFracIdl)
   simplify(I)
   return denominator(I) == 1
 end
@@ -243,20 +201,20 @@ end
 #
 ################################################################################
 
-function Base.:*(A::FfOrdIdl, B::FfOrdFracIdl)
-  z = FfOrdFracIdl(A*numerator(B, copy = false), denominator(B))
+function Base.:*(A::GenOrdIdl, B::GenOrdFracIdl)
+  z = GenOrdFracIdl(A*numerator(B, copy = false), denominator(B))
   return z
 end
 
-Base.:*(A::FfOrdFracIdl, B::FfOrdIdl) = FfOrdFracIdl(numerator(A, copy = false)*B, denominator(A))
+Base.:*(A::GenOrdFracIdl, B::GenOrdIdl) = GenOrdFracIdl(numerator(A, copy = false)*B, denominator(A))
 
 
-function Base.:*(x::GenOrdElem, y::FfOrdFracIdl)
+function Base.:*(x::GenOrdElem, y::GenOrdFracIdl)
   #parent(x) !== order(y) && error("GenOrds of element and ideal must be equal")
-  return FfOrdIdl(parent(x), x) * y
+  return GenOrdIdl(parent(x), x) * y
 end
 
-Base.:*(x::FfOrdFracIdl, y::GenOrdElem) = y * x
+Base.:*(x::GenOrdFracIdl, y::GenOrdElem) = y * x
 
 
 ################################################################################
@@ -265,7 +223,7 @@ Base.:*(x::FfOrdFracIdl, y::GenOrdElem) = y * x
 #
 ################################################################################
 
-function Hecke.colon(I::FfOrdFracIdl, J::FfOrdFracIdl)
+function Hecke.colon(I::GenOrdFracIdl, J::GenOrdFracIdl)
   # Let I = a/c and J = b/d, a and b integral ideals, c, d \in Z, then
   # \{ x \in K | xJ \subseteq I \} = \{ x \in K | xcb \subseteq da \}
 
