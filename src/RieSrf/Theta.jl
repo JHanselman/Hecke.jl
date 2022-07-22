@@ -19,6 +19,8 @@ function theta(z::Array{acb}, RS::RiemannSurface; char::Tuple{Vector{S}, Vector{
     
   tau = small_period_matrix(RS)
   
+  tau, U = siegel_reduction(tau)
+  
   #tau = X + i*Y
   X = real(tau)
   Y = imag(tau)
@@ -50,7 +52,7 @@ function theta(z::Array{acb}, RS::RiemannSurface; char::Tuple{Vector{S}, Vector{
   #We compute the radius of the ellipsoid over which we take the sum needed to bound the error in the sum by eps (See Theorem 3.1 in Agostini, Chua) 
   R_function = function(x::arb, eps::arb)
     Rc = parent(x)
-    return (2*pi)^N * g//2 * (2//rho)^g * sum([binomial(N, j) * T_inv_norm^j * sqrt(g)^(N - j) * gamma(Rc((g + j)//2), (x - rho//2)^2) for j in (0:N)]; init = zero(R)) - eps
+    return (2*pi)^N * g//2 * (2//rho)^g * sum([binomial(N, j) * T_inv_norm^j * sqrt(g)^(N - j) * gamma(Rc((g + j)//2), (x - rho//2)^2) for j in (0:N)]; init = zero(Rc)) - eps
   end
   
   #We want to find the max(R0, x) where x is the solution to R_function(x, eps) = 0
@@ -209,6 +211,8 @@ end
 -(x::arb_mat, y::acb_mat) = x + (-y)
 -(x::acb_mat, y::arb_mat) = x + (-y)
 //(x::arb_mat, y::arb) = map(t -> t//y, x)
+
+
 
 function acb_mat(A::arb_mat)
   p = precision(base_ring(A))
