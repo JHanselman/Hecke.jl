@@ -15,11 +15,13 @@ export lll, theta, cholesky_decomposition, siegel_reduction
 #
 ################################################################################
 
-function theta(z::Array{acb}, RS::RiemannSurface; char::Tuple{Vector{S}, Vector{S}} = (zeros(Int, genus(RS)), zeroes(Int, genus(RS))), derivs::Array{acb}=[], derivs_t::Array{Tuple{S, S}}=[]) where S<:IntegerUnion
+function theta(z::Vector{acb}, tau::acb_mat; char::Tuple{Vector{fmpz}, Vector{fmpz}} = (zeros(fmpz, nrows(tau)), zeros(fmpz, nrows(tau))), dz::Vector{Vector{acb}}=Vector{acb}[], dtau::Array{Tuple{Int, Int}}= Tuple{Int, Int}[], prec::Int = 0)
+
+  g = nrows(tau)
     
-  tau = small_period_matrix(RS)
-  
-  tau, U = siegel_reduction(tau)
+  if length(char[1])!= g || length(char[2])!= g
+    error("Characteristic needs to be of length g")
+  end
   
   #tau = X + i*Y
   X = real(tau)
@@ -27,23 +29,35 @@ function theta(z::Array{acb}, RS::RiemannSurface; char::Tuple{Vector{S}, Vector{
   
   #Find T upper-triangular with transpose(T)*T = Y
   T = transpose(cholesky_decomposition(Y))
-  g = genus(RS)
+
   
   if length(z)!= g
     error("z needs to be an element of C^g")
   end
   
+  if prec > 0
+    prec = min(prec, precision(parent(z[1])), precision(parent(tau[1, 1])))
+  else
+    prec = min(precision(parent(z[1])), precision(parent(tau[1, 1])))
+  end
   
-  C = AcbField(precision(z))
-  Rc = ArbField(precision(z))
-  pi = const_pi(Rc)
-  i = onei(C)
+  n = floor(prec*log(2)/log(10))
   
-  eps = Rc(10^(-30)) #Should depend on precision
+  Cc = AcbField(prec)
+  Rc = ArbField(prec)
+  piR = const_pi(Rc)
+  i = onei(Cc)
+  
+  
+  
+  eps = Rc(10^(-n)) #Should depend on precision
 
-  rho = norm(shortest_vectors(T)[1]*sqrt(pi))
+  #In Agostini and Chua's code rho = is taken to be the square of the norm of the shortest vector times sqrt(pi)) for some reason.
+  #This could affect the error bounds
   
-  N = 1
+  rho = norm(shortest_vectors(transpose(T))[1]*sqrt(piR))
+  
+  N = length(dz)
   
   R0 = (sqrt(g + 2*N + sqrt(g^2 + 8*N)) + rho)//2
   
@@ -52,7 +66,7 @@ function theta(z::Array{acb}, RS::RiemannSurface; char::Tuple{Vector{S}, Vector{
   #We compute the radius of the ellipsoid over which we take the sum needed to bound the error in the sum by eps (See Theorem 3.1 in Agostini, Chua) 
   R_function = function(x::arb, eps::arb)
     Rc = parent(x)
-    return (2*pi)^N * g//2 * (2//rho)^g * sum([binomial(N, j) * T_inv_norm^j * sqrt(g)^(N - j) * gamma(Rc((g + j)//2), (x - rho//2)^2) for j in (0:N)]; init = zero(Rc)) - eps
+    return (2*piR)^N * g//2 * (2//rho)^g * sum([binomial(N, j) * inv(pi^(j//2))* T_inv_norm^j * sqrt(g)^(N - j) * gamma(Rc((g + j)//2), (x - rho//2)^2) for j in (0:N)]; init = zero(Rc)) - eps
   end
   
   #We want to find the max(R0, x) where x is the solution to R_function(x, eps) = 0
@@ -63,7 +77,7 @@ function theta(z::Array{acb}, RS::RiemannSurface; char::Tuple{Vector{S}, Vector{
   #and then subdivide intervals until we find a solution that satisfies our requirements
   
   R1 = R0
-  err = Rc(10^(-20))
+  err = Rc(10^(-n))
   
   #Find an R1 such that R_function becomes negative
   while(R_function(R1, eps) > 0)
@@ -83,64 +97,57 @@ function theta(z::Array{acb}, RS::RiemannSurface; char::Tuple{Vector{S}, Vector{
   end
   
   radius_ellipsoid = R1
+  error_epsilon = R_function(R1, zero(Rc))
   
-  
-  
-  if length(char[1])!= g || length(char[2])!= g
-    error("Characteristic needs to be of length g")
-  end
-    
-  for c in char[1]
-    if c < 0 || c > 1
-      error("Characteristic needs to be an array of ones and zeroes")
+  ellipsoid_points = Hecke.enumerate_using_gram(Y, R1^2//piR)
+  for i in (1:g)
+    Lat1 = Vector{fmpz}[]
+    pad = zeros(fmpz, g)
+    pad[i] = 1
+    for l in ellipsoid_points
+      push!(Lat1, l + pad)
+      push!(Lat1, l - pad)
     end
-    shift_n[1] =  C(c//2)
+    ellipsoid_points = union(ellipsoid_points, Lat1)
   end
-    
-  for c in char[2]
-    if c < 0 || c > 1
-      error("Characteristic needs to be an array of ones and zeroes")
-    end
-    shift_x[2] = C(c//2)
-  end
-    
-  # compute derivatives with respect to tau by converting to derivatives with respect to z using the heat equation
-  deriv_t_factor = one(C) # multiply result by this factor
-    
-  for d in derivs_t
-    if d[1] == d[2]
-      deriv_t_factor *= //(4*pi*onei)
+  
+  factor = one(Cc)
+  for ij in dtau
+    if ij[1] == ij[2]
+      factor //= 4 * piR * i
     else
-      deriv_t_factor *= 1//(2*pi*onei)
+      factor //= 2 * piR * i
     end
-    deriv = [zeros(C, g), zeros(C, g)]
-    deriv[1][d[1]] = one(C)
-    deriv[2][d[2]] = one(C)
+    deriv = [zeros(R.g), zeros(R.g)]
+    deriv[1][ij[1]] = 1
+    deriv[2][ij[2]] = 1
     derivs = vcat(derivs, deriv)
   end
-  # compute theta function
-  x = real(z) + shift_x # shift z by characteristic
+  
+  #We seem to find more points than Agostini as we also consider lattices centered at points of the form [0,1,-1], etc.
+  #This could also affect error bounds
+ 
+  #We compute the Theta function
+  x = real(z)
   y = imag(z)
-    
-  y0 = inv(tau_im)*y
-  exp_part = exp((π*transpose(y)*y0)[1]) # exponential part of theta function
-  osc_part = oscillatory_part(tau, x, y0, shift_n, derivs) # oscillatory part of theta function
-  return deriv_t_factor*exp_part*osc_part
+  
+  invYy = inv(Y) * y
+  exponential_part = exp(piR*(transpose(y) * invYy)) 
+  
+  eta = map(Rc, (map(t -> round(fmpz, t), invYy) - char[1]//2))
+  
+  pointset = map(t -> map(Rc, t) - eta, ellipsoid_points)
+  
+  oscillatory_part = (2*piR*i)^N*sum([
+  prod(transpose(d)*v for d in dz; init = one(Rc)) * 
+  exp(piR*i*((transpose(v) * (X * v)) + 2*transpose(v) * (x + char[2]//2))) * exp(-piR* (transpose(v + invYy) * (Y * (v + invYy)))) for v in pointset]; init = zero(Cc))
+  
+  result = factor*exponential_part*oscillatory_part
+  
+  error_term = exponential_part*error_epsilon
+  return result, error_term
 end
 
-
-"""
-    oscillatory_part(R, x, y0, shift_n, derivs=[])
-Compute the oscillatory part of the Riemann theta function. Helper function to [`theta`](@ref).
-"""
-function oscillatory_part(R::acb_mat, x::Array{<:Real}, y0::Array{<:Real}, shift_n::Array{<:Real}, derivs::Array{}=[])
-    nderivs = size(derivs)[1];
-    E = [n + shift_n for n in R.ellipsoid[nderivs + 1]]; # shift points in ellipsoid for computing theta function with characteristics
-    w = round.(y0);
-    w0 = y0 - w;
-    s = (2*π*im)^(nderivs) * sum([ (nderivs > 0 ? prod(transpose(d)*(p-w) for d in derivs) : 1) * exp(2*π*im*((0.5*(transpose(p-w)*R.X*(p-w))[1] + transpose(p-w)*x)[1]) - π*(transpose(p+w0)*R.Y*(p+w0))[1]) for p in E]); # compute sum over points in ellipsoid
-    return s;
-end
 
 function siegel_reduction(tau::acb_mat)
   g = nrows(tau)
@@ -253,18 +260,6 @@ function lll_with_transform(M::arb_mat; ctx = lll_ctx(0.99, 0.51))
   return T*M, T
 end
 
-function lll_gram_with_transform(M::arb_mat; ctx = lll_ctx(0.99, 0.51))
-  R = base_ring(M)
-  
-  #Find number of bits of precision of coefficients of M and subtract 4 to divide by 16 and ensure the numbers are small enough to round
-  p = -(ceil(Int,log(maximum(radius, M))/log(2))+4)
-  n = nrows(M)
-  d = zero_matrix(FlintZZ, n, n)
-  round_scale!(d, M, p)
-  d, T = lll_gram_with_transform(d, ctx)
-  T = change_base_ring(R, T)
-  return T*M, T
-end
 
 function shortest_vectors(M::arb_mat)
   R = base_ring(M)
@@ -280,6 +275,4 @@ end
 function norm(v::arb_mat)
   return sqrt(sum([a^2 for a in v]))
 end
-
-#M = matrix(ArbField(100), 4, 4, [0.7563, 0.4850, 0.4806, 0.3846, 0.4850, 1.3631, 0.2669, -0.3084, 0.4806, 0.2669, 0.7784, -0.4523, 0.3846, -0.3084, -0.4523, 1.7538])
 
