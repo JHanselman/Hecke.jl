@@ -445,17 +445,18 @@ function analytic_continuation(RS::RiemannSurface, gamma::CPath, abscissae::Vect
     x_vals[l] = evaluate(gamma, u[l])
     
     #Take minimum of |zi - zj|
-    d = minimum([abs(z[i] - z[j]) for (i, j) in filter(t-> t[1] != t[2], [a for a in Iterators.product((1:m), (1:m))])])
+    d = reduce(min, [abs(z[i] - z[j]) for (i, j) in filter(t-> t[1] != t[2], [a for a in Iterators.product((1:m), (1:m))])])
 
     
     W = [ f(x_vals[l], z[i]) // prod([z[i] - z[j] for j in vcat((1:i - 1), i+1:m)];init = one(Cc)) for i in (1:m)]
-    w = maximum(map(abs, W))
+    w = reduce(max, map(abs, W))
     
     if w < d // (2*m)
       #Only one root in each disc with center zi and radius abs(Wi)//(1 - m *(1//(2*m + 1)))
       fill!(temp_vec, y_vals[l - 1])
-      ccall((:acb_poly_find_roots, libarb), Nothing, (Ptr{acb_struct}, Ref{acb_poly}, Ptr{acb_struct}, Int, Int), temp_vec_res, f(u[l], y), temp_vec, 0, prec)
-      y_vals[l] .= array(parent(y_vals[l - 1][1]), temp_vec_res, 2)
+      dd = ccall((:acb_poly_find_roots, libarb), Cint, (Ptr{acb_struct}, Ref{acb_poly}, Ptr{acb_struct}, Int, Int), temp_vec_res, f(x_vals[l], y), temp_vec, 0, prec)
+      @assert dd == m
+      y_vals[l] .= array(Cc, temp_vec_res, 2)
       #y_vals[l] = roots(f(u[l], y), initial_prec = prec)
     end
   end
