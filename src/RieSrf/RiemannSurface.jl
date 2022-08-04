@@ -438,6 +438,8 @@ function analytic_continuation(RS::RiemannSurface, gamma::CPath, abscissae::Vect
   
   z = y_vals[1]
   
+  temp_vec = acb_vec(2)
+  temp_vec_res = acb_vec(2)
  
   for l in (2:N)
     x_vals[l] = evaluate(gamma, u[l])
@@ -451,12 +453,15 @@ function analytic_continuation(RS::RiemannSurface, gamma::CPath, abscissae::Vect
     
     if w < d // (2*m)
       #Only one root in each disc with center zi and radius abs(Wi)//(1 - m *(1//(2*m + 1)))
-      ccall((:acb_poly_find_roots, libarb), Nothing, (Ref{acb}, Ref{acb_poly}, Ref{acb}, Int, Int), y_vals[l], f(u[l], y), y_vals[l-1], 0, prec)
+      fill!(temp_vec, y_vals[l - 1])
+      ccall((:acb_poly_find_roots, libarb), Nothing, (Ptr{acb_struct}, Ref{acb_poly}, Ptr{acb_struct}, Int, Int), temp_vec_res, f(u[l], y), temp_vec, 0, prec)
+      y_vals[l] .= array(parent(y_vals[l - 1][1]), temp_vec_res, 2)
       #y_vals[l] = roots(f(u[l], y), initial_prec = prec)
     end
-    
   end
-  
+
+  acb_vec_clear(temp_vec, 2)
+  acb_vec_clear(temp_vec_res, 2)
 end
 
 function find_paths_to_end(path, paths, edges, ordered_disc_points)
