@@ -145,7 +145,11 @@ function theta(z::Vector{acb}, tau::acb_mat; char::Tuple{Vector{fmpz}, Vector{fm
   result = factor*exponential_part*oscillatory_part
   
   error_term = exponential_part*error_epsilon
-  return result, error_term
+  
+  ccall((:acb_add_error_arb, libarb), Cvoid,
+      (Ref{acb}, Ref{arb}), result, error_term)
+  
+  return result
 end
 
 
