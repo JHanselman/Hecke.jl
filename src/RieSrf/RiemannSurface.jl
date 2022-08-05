@@ -8,7 +8,7 @@
 
 export RieSrf, CPath
 
-export RiemannSurface, discriminant_points, embedding, genus, precision, fundamental_group_of_punctured_P1, c_line, max_radius, radius_factor, find_paths_to_end, start_point, end_point, c_arc, sheet_ordering, embed_mpoly
+export RiemannSurface, discriminant_points, embedding, genus, precision, fundamental_group_of_punctured_P1, c_line, max_radius, radius_factor, find_paths_to_end, start_point, end_point, c_arc, sheet_ordering, embed_mpoly, path_type, analytic_continuation, reverse, assign_permutation, permutation, monodromy_representation, monodromy_group, minimal_spanning_tree
 
 ################################################################################
 #
@@ -16,13 +16,98 @@ export RiemannSurface, discriminant_points, embedding, genus, precision, fundame
 #
 ################################################################################
 
+mutable struct CPath
+
+  path_type::Int
+  start_point::acb
+  end_point::acb
+  C::AcbField
+  
+  center::acb
+  radius::arb
+  
+  length::arb
+  gamma::Any
+  orientation::Int
+  permutation::Perm{Int}
+  
+  #Path type index:
+  #0 is a line
+  #1 is an arc
+  #2 is a circle
+  
+  function CPath(a::acb, b::acb, path_type::Int, c::acb = zero(parent(a)), radius::arb = real(zero(parent(a))), orientation::Int = 1)
+  
+    P = new()
+    P.C = parent(a)
+    P.start_point = a
+    P.end_point = b
+    P.path_type = path_type
+    P.center = c
+    P.radius = radius
+    P.orientation = orientation
+    
+    #Line
+    if path_type == 0
+      gamma = function(t::arb)
+        return (a + b)//2 + (b - a)//2 * t
+      end
+      length = abs(b - a)
+    end
+    
+    
+    i = onei(P.C)
+    piC = real(const_pi(P.C))
+    
+    phi_a = mod2pi(angle(a - c))
+    phi_b = mod2pi(angle(b - c))
+    
+    if orientation == 1
+      if phi_b < phi_a
+        phi_b += 2*piC
+      end
+    elseif orientation == - 1
+       if phi_a < phi_b
+        phi_a += 2*piC
+      end
+    end
+    
+    
+    
+    #Arc
+    if path_type == 1
+      gamma = function(t::arb)
+        return c + radius * exp(i * ((phi_a + phi_b)//2 + (phi_b - phi_a)//2 * orientation * t))
+      end
+      
+      length = abs((phi_b - phi_a)) * radius
+      
+    end
+    
+    #Full circle
+    if path_type == 2
+      gamma = function(t::arb)
+        #Minus radius as gamma(-1) = a
+        return c - radius * exp(i * (phi_a + piC * t ))
+      end
+      length = 2 * piC * radius
+    end
+    
+    P.gamma = gamma
+    P.length = length
+    return P
+  end
+
+end
+
 mutable struct RiemannSurface
   defining_polynomial::MPolyElem
   genus::Int
   tau::acb_mat
   prec::Int
   embedding::Union{PosInf, InfPlc}
-  
+  discriminant_points::Vector{acb}
+  closed_chains::Vector{CPath}
 
   function RiemannSurface(tau::acb_mat)
     RS = new()
@@ -47,75 +132,28 @@ mutable struct RiemannSurface
   end
 end
 
-mutable struct CPath
-
-  path_type::Int
-  start_point::acb
-  end_point::acb
-  C::AcbField
+function reverse(G::CPath)
   
-  center::acb
-  radius::arb
+  p_type = path_type(G)
   
-  length::arb
-  gamma::Any
-  
-  #Path type index:
-  #0 is a line
-  #1 is an arc
-  #2 is a circle
-  
-  function CPath(a::acb, b::acb, path_type::Int, center::acb = zero(parent(a)), radius::arb = real(zero(parent(a))))
-  
-    P = new()
-    P.C = parent(a)
-    P.start_point = a
-    P.end_point = b
-    P.path_type = path_type
-    P.center = center
-    P.radius = radius
-    
-    
-    if path_type == 0
-      gamma = function(t::arb)
-        return (a + b)//2 + (b - a)//2 * t
-      end
-    end
-    
-    phi_a = mod2pi(angle(a - center))
-    phi_b = mod2pi(angle(b - center))
-    i = onei(P.C)
-    piC = const_pi(P.C)
-    
-    if path_type == 1
-      gamma = function(t::arb)
-        return center + radius * exp(i * ((phi_a + phi_b)//2 + (phi_b - phi_a)//2 * t))
-      end
-    end
-    
-    if path_type == 2
-      gamma = function(t::arb)
-        #Minus radius as gamma(-1) = a
-        return center - radius * exp(i * (phi_a + piC * t ))
-      end
-    end
-    
-    P.gamma = gamma
-    
-    return P
+  if p_type == 0
+    G_rev = c_line(end_point(G), start_point(G))
+  else #Circle or arc
+    G_rev = c_arc(end_point(G), start_point(G), center(G), orientation = -orientation(G))
   end
-
+  assign_permutation(G_rev, inv(permutation(G)))
+  return G_rev
 end
 
 function c_line(start_point::acb, end_point::acb)
   return CPath(start_point, end_point, 0)
 end
 
-function c_arc(start_point::acb, end_point::acb, center::acb)
+function c_arc(start_point::acb, end_point::acb, center::acb; orientation::Int = 1)
   if contains(end_point, start_point) && contains(start_point, end_point)
-    return CPath(start_point, start_point, 2, center, abs(start_point - center))
+    return CPath(start_point, start_point, 2, center, abs(start_point - center), orientation)
   else
-    return CPath(start_point, end_point, 1, center, abs(start_point - center))
+    return CPath(start_point, end_point, 1, center, abs(start_point - center), orientation)
   end
 end
 
@@ -172,6 +210,22 @@ function evaluate(G::CPath, t::arb)
   return G.gamma(t)
 end
 
+function length(G::CPath)
+  return G.length
+end
+
+function orientation(G::CPath)
+  return G.orientation
+end
+
+function assign_permutation(G::CPath, permutation::Perm{Int})
+  G.permutation = permutation
+end
+
+function permutation(G::CPath)
+  return G.permutation
+end
+
 function defining_polynomial(RS::RiemannSurface)
   return RS.defining_polynomial
 end
@@ -210,8 +264,54 @@ function radius_factor(RS::RiemannSurface)
   return ArbField(precision(RS))(2//5)
 end
 
+function monodromy_representation(RS::RiemannSurface)
+  paths, pi1_gens = fundamental_group_of_punctured_P1(RS, true)
+  f = defining_polynomial(RS)
+  m = degree(f, 2)
+  
+  s_m = SymmetricGroup(m)
+  
+  for i in (1:length(paths))
+    path = paths[i]
+    N = ceil(Int, length(path)) +1
+    if path_type(path) in [1,2]
+      N *= 4
+    end
+      
+      
+    Rc = ArbField(precision(RS))
+     
+    abscissae = [Rc(n//N) for n in (-N + 1: N - 1)] 
+     
+    An = analytic_continuation(RS, path, abscissae)
+    
+    path_perm = sortperm(An[end][2], lt = sheet_ordering)
+    assign_permutation(path, s_m(path_perm))
+  end
+  
+  mon_rep = []
+  
+  for gamma in pi1_gens
+    chain = map(t -> ((t > 0) ? paths[t] : reverse(paths[-t])), gamma)
+    gamma_perm = prod(map(permutation, chain))
+    
+    if gamma_perm != one(s_m)
+      push!(mon_rep, (chain, gamma_perm))
+     end
+  end
+  
+  return mon_rep
+  
+end
+
+function monodromy_group(RS::RiemannSurface)
+  mon_rep = monodromy_representation(RS)
+  gens = map(t -> t[2], mon_rep)
+  return closure(mon_rep, *)
+end
+
 #Follows algorithm 4.3.1 in Neurohr
-function fundamental_group_of_punctured_P1(RS::RiemannSurface, abel_jacobi::Bool = false)
+function fundamental_group_of_punctured_P1(RS::RiemannSurface, abel_jacobi::Bool = true)
   
   #Compute the exceptional values x_i
   D_points = discriminant_points(RS)
@@ -233,7 +333,7 @@ function fundamental_group_of_punctured_P1(RS::RiemannSurface, abel_jacobi::Bool
     
     #Real part should already be minimal in D_points
     x0 = Cc(min(floor(fmpz, real(D_points[1]) - 2*max_radius(RS)), -1))
-    push!(D_points, x0)
+    
     
     #Connect base point to closest point in D_points
     closest = 1
@@ -245,7 +345,7 @@ function fundamental_group_of_punctured_P1(RS::RiemannSurface, abel_jacobi::Bool
         distance = new_distance
       end
     end
-    
+    push!(D_points, x0)
     push!(edges, (d +1, closest))
   else
   #Here we take the one that is most suitable if one doesn't need to compute Abel-Jacobi maps according to Neurohr, i.e. we split the longest edge in the middle. 
@@ -259,7 +359,6 @@ function fundamental_group_of_punctured_P1(RS::RiemannSurface, abel_jacobi::Bool
     push!(edges, (d + 1, left))
     push!(edges, (d + 1, right))
   end
-  
   #Now we sort the points by angle and level
 
   path_edges = []
@@ -409,8 +508,7 @@ function fundamental_group_of_punctured_P1(RS::RiemannSurface, abel_jacobi::Bool
   return vcat(c_lines, c_arcs), reverse(paths_with_arcs)
 end
 
-function analytic_continuation(RS::RiemannSurface, gamma::CPath, abscissae::Vector{arb})
-  
+function analytic_continuation(RS::RiemannSurface, path::CPath, abscissae::Vector{arb})
   v = embedding(RS)
   prec = precision(RS)
   Rc = ArbField(prec)
@@ -427,8 +525,8 @@ function analytic_continuation(RS::RiemannSurface, gamma::CPath, abscissae::Vect
   N = length(u)
   
   x_vals = zeros(Cc, N)
-  y_vals = fill(zeros(Cc, m), N)
-  x_vals[1] = evaluate(gamma, u[1])
+  y_vals = [zeros(Cc, m) for i in (1:N)]
+  x_vals[1] = evaluate(path, u[1])
   
   Kxy = parent(f)
   Ky, y = PolynomialRing(base_ring(Kxy), "y")
@@ -436,33 +534,34 @@ function analytic_continuation(RS::RiemannSurface, gamma::CPath, abscissae::Vect
   
   y_vals[1] = sort!(roots(f(x_vals[1], y), initial_prec = prec), lt = sheet_ordering)
   
-  z = y_vals[1]
-  
-  temp_vec = acb_vec(2)
-  temp_vec_res = acb_vec(2)
+  temp_vec = acb_vec(m)
+  temp_vec_res = acb_vec(m)
  
   for l in (2:N)
-    x_vals[l] = evaluate(gamma, u[l])
-    
+    x_vals[l] = evaluate(path, u[l])
+    z = y_vals[l-1]
     #Take minimum of |zi - zj|
     d = reduce(min, [abs(z[i] - z[j]) for (i, j) in filter(t-> t[1] != t[2], [a for a in Iterators.product((1:m), (1:m))])])
 
     
     W = [ f(x_vals[l], z[i]) // prod([z[i] - z[j] for j in vcat((1:i - 1), i+1:m)];init = one(Cc)) for i in (1:m)]
-    w = reduce(max, map(abs, W))
+    w = reduce(max, map(t -> real(t)^2 +imag(t)^2, W))
     
-    if w < d // (2*m)
-      #Only one root in each disc with center zi and radius abs(Wi)//(1 - m *(1//(2*m + 1)))
+    #Need solution when w condition not fullfilled
+    
+    #if w < d // (2*m)
+      #Only one root in each disc with center zi and radius |Wi|//(1 - m *(1//(2*m + 1)))
       fill!(temp_vec, y_vals[l - 1])
       dd = ccall((:acb_poly_find_roots, libarb), Cint, (Ptr{acb_struct}, Ref{acb_poly}, Ptr{acb_struct}, Int, Int), temp_vec_res, f(x_vals[l], y), temp_vec, 0, prec)
+
       @assert dd == m
-      y_vals[l] .= array(Cc, temp_vec_res, 2)
-      #y_vals[l] = roots(f(u[l], y), initial_prec = prec)
-    end
+      y_vals[l] .= array(Cc, temp_vec_res, m)
+    #end
   end
 
-  acb_vec_clear(temp_vec, 2)
-  acb_vec_clear(temp_vec_res, 2)
+  acb_vec_clear(temp_vec, m)
+  acb_vec_clear(temp_vec_res, m)
+  return collect(zip(x_vals, y_vals))
 end
 
 function find_paths_to_end(path, paths, edges, ordered_disc_points)
@@ -509,17 +608,24 @@ function minimal_spanning_tree(v::Vector{acb})
   
   tree = Tuple{Int, Int}[]
   
-  nodes = Int[]
+  disjoint_trees = [Set([i]) for i in (1:N)]
   
   i = 1
   
-  while length(nodes) < N
+  while length(tree) < N - 1
   
     (s1, s2) = edge_weights[i][2]
     
-    if !(s1 in nodes && s2 in nodes)
+    s1_index = findfirst(t -> s1 in t, disjoint_trees)
+    
+    s1_tree = disjoint_trees[s1_index]
+    
+    if s2 in s1_tree
+      #continue
+    else
+      s2_tree = popat!(disjoint_trees, findfirst(t -> s2 in t, disjoint_trees))
       push!(tree, (s1, s2))
-      union!(nodes, [s1,s2])
+      union!(s1_tree, s2_tree) 
     end
     i+= 1
   end
@@ -527,29 +633,43 @@ function minimal_spanning_tree(v::Vector{acb})
   return tree
 end
 
-function discriminant_points(RS::RiemannSurface)
-  f = defining_polynomial_univariate(RS)
-  Kxy = parent(f)
-  Kx = base_ring(f)
+function assure_has_discriminant_points(RS::RiemannSurface)
+  if isdefined(RS, :discriminant_points)
+    return nothing
+  else
+    f = defining_polynomial_univariate(RS)
+    Kxy = parent(f)
+    Kx = base_ring(f)
   
-  v = embedding(RS)
-  prec = precision(RS)
+    v = embedding(RS)
+    prec = precision(RS)
   
-  disc_y_factors = acb_poly[]
-  a0_factors = acb_poly[]
+    disc_y_factors = acb_poly[]
+    a0_factors = acb_poly[]
   
-  for (f,e) in factor(discriminant(f))
-    push!(disc_y_factors, embed_poly(f, v, prec))
-  end
+    for (f,e) in factor(discriminant(f))
+      push!(disc_y_factors, embed_poly(f, v, prec))
+    end
   
     for (f,e) in factor(leading_coefficient(f))
-    push!(a0_factors, embed_poly(f, v, prec))
-  end
+      push!(a0_factors, embed_poly(f, v, prec))
+    end
   
-  D1 = vcat(acb[],[roots(fac, initial_prec = prec) for fac in disc_y_factors]...)
-  D2 = vcat(acb[],[roots(fac, initial_prec = prec) for fac in a0_factors]...)
-  D_points = sort!(vcat(D1, D2), lt = sheet_ordering)
-  return D_points
+    D1 = vcat(acb[],[roots(fac, initial_prec = prec) for fac in disc_y_factors]...)
+    D2 = vcat(acb[],[roots(fac, initial_prec = prec) for fac in a0_factors]...)
+    D_points = sort!(vcat(D1, D2), lt = sheet_ordering)
+    RS.discriminant_points = D_points
+    return nothing
+  end
+end
+
+function discriminant_points(RS::RiemannSurface, copy::Bool = true)
+  assure_has_discriminant_points(RS)
+  if copy
+    return deepcopy(RS.discriminant_points)
+  else
+    return RS.discriminant_points
+  end
 end
 
 function embed_poly(f::PolyElem{nf_elem}, v::T, prec::Int = 100) where T<:Union{PosInf, InfPlc}
