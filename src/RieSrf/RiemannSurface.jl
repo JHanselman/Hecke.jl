@@ -55,12 +55,37 @@ mutable struct CPath
       length = abs(b - a)
     end
     
+    Cc = P.C
     
-    i = onei(P.C)
-    piC = real(const_pi(P.C))
+    i = onei(Cc)
+    piC = real(const_pi(Cc))
     
-    phi_a = mod2pi(angle(a - c))
-    phi_b = mod2pi(angle(b - c))
+    #Round real or imag part to zero to compute angle if necessary
+    prec = precision(Cc)
+    zero_sens = floor(prec*log(2)/log(10)) - 5
+    
+    a_diff = a - c
+    
+    if abs(real(a_diff)) < 10^(-zero_sens)
+      a_diff = Cc(imag(a_diff))*i
+    end
+    
+    if abs(imag(a_diff)) < 10^(-zero_sens)
+      a_diff = Cc(real(a_diff))
+    end
+    
+    b_diff = b - c
+    
+    if abs(real(b_diff)) < 10^(-zero_sens)
+      b_diff = Cc(imag(b_diff))*i
+    end
+    
+    if abs(imag(b_diff)) < 10^(-zero_sens)
+      b_diff = Cc(real(b_diff))
+    end
+    
+    phi_a = mod2pi(angle(a_diff))
+    phi_b = mod2pi(angle(b_diff))
     
     if orientation == 1
       if phi_b < phi_a
@@ -286,7 +311,7 @@ function monodromy_representation(RS::RiemannSurface)
     An = analytic_continuation(RS, path, abscissae)
     
     path_perm = sortperm(An[end][2], lt = sheet_ordering)
-    assign_permutation(path, s_m(path_perm))
+    assign_permutation(path, inv(s_m(path_perm)))
   end
   
   mon_rep = []
@@ -307,7 +332,7 @@ end
 function monodromy_group(RS::RiemannSurface)
   mon_rep = monodromy_representation(RS)
   gens = map(t -> t[2], mon_rep)
-  return closure(mon_rep, *)
+  return closure(gens, *)
 end
 
 #Follows algorithm 4.3.1 in Neurohr
@@ -416,7 +441,7 @@ function fundamental_group_of_punctured_P1(RS::RiemannSurface, abel_jacobi::Bool
   find_paths_to_end([(d+1, d+1)], paths, path_edges, ordered_disc_points)
   ordered_disc_points = map(t -> D_points[t], ordered_disc_points)
   
-  radii = [min(max_radius(RS), radius_factor(RS) * minimum(map(t -> abs(t - ordered_disc_points[j]), vcat(ordered_disc_points[1:j-1], ordered_disc_points[j+1:end])))) for j in (1:d)]
+  radii = [min(max_radius(RS), radius_factor(RS) * minimum(map(t -> abs(t - D_points[j]), vcat(D_points[1:j-1], D_points[j+1:end])))) for j in (1:d)]
   
   c_lines = CPath[]
   
@@ -526,6 +551,7 @@ function analytic_continuation(RS::RiemannSurface, path::CPath, abscissae::Vecto
   
   x_vals = zeros(Cc, N)
   y_vals = [zeros(Cc, m) for i in (1:N)]
+  z = zeros(Cc, m)
   x_vals[1] = evaluate(path, u[1])
   
   Kxy = parent(f)
@@ -533,35 +559,42 @@ function analytic_continuation(RS::RiemannSurface, path::CPath, abscissae::Vecto
   
   
   y_vals[1] = sort!(roots(f(x_vals[1], y), initial_prec = prec), lt = sheet_ordering)
-  
-  temp_vec = acb_vec(m)
-  temp_vec_res = acb_vec(m)
- 
   for l in (2:N)
     x_vals[l] = evaluate(path, u[l])
-    z = y_vals[l-1]
-    #Take minimum of |zi - zj|
-    d = reduce(min, [abs(z[i] - z[j]) for (i, j) in filter(t-> t[1] != t[2], [a for a in Iterators.product((1:m), (1:m))])])
-
-    
-    W = [ f(x_vals[l], z[i]) // prod([z[i] - z[j] for j in vcat((1:i - 1), i+1:m)];init = one(Cc)) for i in (1:m)]
-    w = reduce(max, map(t -> real(t)^2 +imag(t)^2, W))
-    
-    #Need solution when w condition not fullfilled
-    
-    #if w < d // (2*m)
-      #Only one root in each disc with center zi and radius |Wi|//(1 - m *(1//(2*m + 1)))
-      fill!(temp_vec, y_vals[l - 1])
-      dd = ccall((:acb_poly_find_roots, libarb), Cint, (Ptr{acb_struct}, Ref{acb_poly}, Ptr{acb_struct}, Int, Int), temp_vec_res, f(x_vals[l], y), temp_vec, 0, prec)
-
-      @assert dd == m
-      y_vals[l] .= array(Cc, temp_vec_res, m)
-    #end
+    z .= y_vals[l-1]
+    y_vals[l] .= recursive_continuation(f, x_vals[l-1], x_vals[l], z)
   end
-
-  acb_vec_clear(temp_vec, m)
-  acb_vec_clear(temp_vec_res, m)
   return collect(zip(x_vals, y_vals))
+end
+
+function recursive_continuation(f, x1, x2, z)
+  Kxy = parent(f)
+  Ky, y = PolynomialRing(base_ring(Kxy), "y")
+  Cc = base_ring(f)
+  prec = precision(Cc)
+  m = degree(f, 2)
+  temp_vec = acb_vec(m)
+  temp_vec_res = acb_vec(m)
+  d = reduce(min, [abs(z[i] - z[j]) for (i, j) in filter(t-> t[1] != t[2], [a for a in Iterators.product((1:m), (1:m))])]) 
+  W = [ f(x2, z[i]) // prod([z[i] - z[j] for j in vcat((1:i - 1), i+1:m)];init = one(Cc)) for i in (1:m)]
+  w = reduce(max, map(t -> real(t)^2 +imag(t)^2, W))
+  
+  if w < d // (2*m)
+    fill!(temp_vec, z)
+    dd = ccall((:acb_poly_find_roots, libarb), Cint, (Ptr{acb_struct}, Ref{acb_poly}, Ptr{acb_struct}, Int, Int), temp_vec_res, f(x2, y), temp_vec, 0, prec)
+
+    @assert dd == m
+    z .= array(Cc, temp_vec_res, m)
+    
+    acb_vec_clear(temp_vec, m)
+    acb_vec_clear(temp_vec_res, m)
+    
+    return z
+  else
+    midpoint = (x1 + x2)//2
+    return recursive_continuation(f, midpoint, x2, recursive_continuation(f, x1, midpoint, z))
+  end
+  
 end
 
 function find_paths_to_end(path, paths, edges, ordered_disc_points)
