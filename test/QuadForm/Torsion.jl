@@ -7,6 +7,7 @@
   L = Zlattice(2*identity_matrix(ZZ,2))
   S = lattice(ambient_space(L),basis_matrix(L)[1,:])
   @test order(discriminant_group(S)) == 4
+  @test discriminant_group(S) === discriminant_group(S)
 
   D4_gram = matrix(ZZ, [[2, 0, 0, -1],
                         [0, 2, 0, -1],
@@ -21,6 +22,8 @@
 
   S = lattice(ambient_space(L),basis_matrix(L)[:2,:])
   D = discriminant_group(S)
+  D0, _ = sub(D,gens(D)[1:0])
+  @test order(D0)==1
   D1, _ = sub(D,gens(D)[1:1])
   @test order(D1)==2
 
@@ -55,6 +58,9 @@
   for i in 1:4
     @test T(lift(G[i])) == G[i]
   end
+
+  @test order(-G[1])==order(G[1])
+  @test iszero(0*G[1])
 
   TT, mTT = @inferred sub(T, [T([1, 1//2, 1//2, 1])])
   @test order(TT) == 2
@@ -181,4 +187,9 @@
   @test N === normal_form(N)[1]
   j = inv(i)
   @test all(g == i(j(g)) for g in gens(N))
+
+  # iterator
+  gen = genera((0,6), 2^3*3^3*5^2)
+  disc = discriminant_group.(gen)
+  @test all(T -> length(collect(T)) == order(T), disc)
 end

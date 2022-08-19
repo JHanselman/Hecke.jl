@@ -140,7 +140,7 @@ function torsion_quadratic_module(M::ZLat, N::ZLat; gens::Union{Nothing, Vector{
 end
 
 # compute M^#/M
-function discriminant_group(L::ZLat)
+@attr function discriminant_group(L::ZLat)::TorQuadMod
   @req is_integral(L) "the lattice must be integral"
   T = torsion_quadratic_module(dual(L), L)
   set_attribute!(T,:is_degenerate => false)
@@ -345,6 +345,8 @@ function Base.:(==)(a::TorQuadModElem, b::TorQuadModElem)
   end
 end
 
+iszero(a::TorQuadModElem) = iszero(a.data)
+
 ################################################################################
 #
 #  Generators
@@ -375,7 +377,7 @@ end
 
 ################################################################################
 #
-#  Addition
+#  Arithmetic
 #
 ################################################################################
 
@@ -383,6 +385,11 @@ function Base.:(+)(a::TorQuadModElem, b::TorQuadModElem)
   @req parent(a) === parent(b) "Parents do not match"
   T = parent(a)
   return T(a.data + b.data)
+end
+
+function Base.:(-)(a::TorQuadModElem)
+  T = parent(a)
+  return T(-a.data)
 end
 
 function Base.:(*)(a::TorQuadModElem, b::fmpz)
@@ -442,6 +449,30 @@ function lift(a::TorQuadModElem)
   T = parent(a)
   z = change_base_ring(FlintQQ, a.data.coeff) * T.gens_lift_mat
   return fmpq[z[1, i] for i in 1:ncols(z)]
+end
+
+
+################################################################################
+#
+#  Iterator
+#
+################################################################################
+
+Base.length(T::TorQuadMod) = Int(order(T))
+
+Base.IteratorSize(::Type{TorQuadMod}) = Base.HasLength()
+
+Base.eltype(::Type{TorQuadMod}) = TorQuadModElem
+
+function Base.iterate(T::TorQuadMod)
+  a, st = iterate(abelian_group(T))
+  return T(a), st
+end
+
+function Base.iterate(T::TorQuadMod, st::UInt)
+  st >= order(T) && return nothing
+  a, st = iterate(abelian_group(T), st)
+  return T(a), st
 end
 
 ################################################################################
@@ -527,6 +558,7 @@ is_bijective(f::TorQuadModMor) = is_bijective(f.map_ab)
 Return the submodule of `T` defined by `generators` and the inclusion morphism.
 """
 function sub(T::TorQuadMod, gens::Vector{TorQuadModElem})
+  @req all(parent(x)===T for x in gens) "generators must lie in T"
   if length(gens) > 0
     _gens = [lift(g) for g in gens]
     V = ambient_space(T.cover)
@@ -534,7 +566,7 @@ function sub(T::TorQuadMod, gens::Vector{TorQuadModElem})
     gens_new = [basis_matrix(T.rels); _gens_mat]
     cover = lattice(V, gens_new, isbasis = false)
   else
-    cover = T.cover
+    cover = T.rels
     _gens = nothing
   end
   S = torsion_quadratic_module(cover, T.rels, gens=_gens, modulus=T.modulus,

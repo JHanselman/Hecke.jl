@@ -1424,7 +1424,6 @@ end
 # Given epiomorphism h : A -> B, transport the refined wedderburn decomposition
 # of A to B
 function _transport_refined_wedderburn_decomposition_forward(h::AbsAlgAssMor)
-return true
   A = domain(h)
   B = codomain(h)
 
@@ -1527,6 +1526,5 @@ function maximal_eichler_quotient_with_projection(A::AbsAlgAss)
       push!(v, i)
     end
   end
-  @show v
   return product_of_components_with_projection(A, v)
 end
