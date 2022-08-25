@@ -6,9 +6,11 @@
 #
 ################################################################################
 
-export RieSrf, CPath
+export RieSrf, CPath, TretkoffEdge
 
-export RiemannSurface, discriminant_points, embedding, genus, precision, fundamental_group_of_punctured_P1, c_line, max_radius, radius_factor, find_paths_to_end, start_point, end_point, c_arc, sheet_ordering, embed_mpoly, path_type, analytic_continuation, reverse, assign_permutation, permutation, monodromy_representation, monodromy_group, minimal_spanning_tree
+export RiemannSurface, discriminant_points, embedding, genus, precision, fundamental_group_of_punctured_P1, monodromy_representation, monodromy_group, homology_basis
+
+export c_line, max_radius, radius_factor, find_paths_to_end, start_point, end_point, c_arc, sheet_ordering, embed_mpoly, path_type, analytic_continuation, reverse, assign_permutation, permutation, minimal_spanning_tree, is_terminated, branch, set_position, terminate, edge_level, get_position, set_label, get_label, PQ, homology_basis
 
 ################################################################################
 #
@@ -155,6 +157,79 @@ mutable struct RiemannSurface
     
     return RS
   end
+end
+
+mutable struct TretkoffEdge
+  start_point::Int
+  end_point::Int
+  level::Int
+  terminated::Bool
+  branch::Vector{Int}
+  position::Int
+  label::Int
+  
+  function TretkoffEdge(a::Int, b::Int, L::Int = 0,  B::Vector{Int} = [a, b], term::Bool = false)
+    TE = new()
+    TE.start_point = a
+    TE.end_point = b
+    TE.level = L
+    TE.terminated = term
+    TE.branch = B
+  
+    return TE
+  end
+end
+
+function start_point(e::TretkoffEdge)
+  return e.start_point
+end
+
+function end_point(e::TretkoffEdge)
+  return e.end_point
+end
+
+function isequal(e1::TretkoffEdge, e2::TretkoffEdge)
+  return start_point(e1) == start_point(e2) && end_point(e1) == end_point(e2)
+end
+
+function edge_level(e::TretkoffEdge)
+  return e.level
+end
+
+function terminate(e::TretkoffEdge)
+  e.terminated = true
+end
+
+function is_terminated(e::TretkoffEdge)
+  return e.terminated
+end
+
+function branch(e::TretkoffEdge)
+  return e.branch
+end
+
+function set_position(e::TretkoffEdge, s::Int)
+  e.position = s
+end
+
+function get_position(e::TretkoffEdge)
+  return e.position
+end
+
+function PQ(e::TretkoffEdge)
+  return start_point(e) < end_point(e)
+end
+
+function reverse(e::TretkoffEdge)
+  return TretkoffEdge(end_point(e), start_point(e))
+end
+
+function set_label(e::TretkoffEdge,l::Int)
+  e.label = l
+end
+
+function get_label(e::TretkoffEdge)
+  return e.label
 end
 
 function reverse(G::CPath)
@@ -325,6 +400,16 @@ function monodromy_representation(RS::RiemannSurface)
      end
   end
   
+  inf_chain = []
+  inf_perm = one(s_m)
+  
+  for g in mon_rep
+    inf_chain = vcat(inf_chain, map(reverse, g[1]))
+    inf_perm *= g[2]
+  end
+  
+  push!(mon_rep, (reverse(inf_chain), inv(inf_perm)))
+  
   return mon_rep
   
 end
@@ -335,6 +420,307 @@ function monodromy_group(RS::RiemannSurface)
   return closure(gens, *)
 end
 
+function homology_basis(RS::RiemannSurface)
+  mon_rep = monodromy_representation(RS)
+  gens = map(t -> t[2], mon_rep)
+  s_n = parent(gens[1])
+  n = s_n.n
+  d = length(gens)
+  
+  ramification_points = []
+  ramification_indices = []
+  
+  for i in (1:d)
+    for cyc in cycles(gens[i])
+      push!(ramification_points, (i, cyc, s_n("("*string(cyc)[2:end-1]*")")))
+      push!(ramification_indices, length(cyc) - 1)
+    end
+  end
+  
+  genus = -n + 1 + divexact(sum(ramification_indices;init = zero(Int)), 2)
+  
+  all_branches_terminated = false
+  ram_pts_nr = length(ramification_points)
+  vertices = Set([ram_pts_nr+1])
+  edges_on_level = []
+  terminated_edges = []
+  
+  level = 1
+  push!(edges_on_level, [])
+  
+  for i in (1:ram_pts_nr)
+    if 1 in ramification_points[i][2]
+      edge = TretkoffEdge(ram_pts_nr + 1, i, level, [ram_pts_nr + 1, i])
+      push!(vertices, i)
+      push!(edges_on_level[level], edge)
+    end
+  end
+  
+  while !all_branches_terminated
+    level += 1
+    push!(edges_on_level, [])
+    
+    s = 0
+    
+    for edge in edges_on_level[level - 1]
+      if !is_terminated(edge)
+        start_perm = ramification_points[end_point(edge)][3]
+        perm = start_perm
+        start_sheet = start_point(edge) - ram_pts_nr
+        while !is_one(perm)
+          new_sheet = perm[start_sheet] + ram_pts_nr
+          if !(new_sheet in branch(edge))
+            new_edge = TretkoffEdge(end_point(edge), new_sheet, level, vcat(branch(edge), new_sheet))
+            s+=1
+            set_position(new_edge, s)
+            push!(edges_on_level[level], new_edge)
+          end
+          perm *= start_perm 
+        end 
+      end
+    end
+    
+    sorted_edges = sort(edges_on_level[level], lt = (a,b) -> start_point(a) < start_point(b))
+    for edge in sorted_edges
+      if end_point(edge) in vertices
+        terminate(edge)
+        push!(terminated_edges, edge)
+      else
+        push!(vertices, end_point(edge))
+      end
+    end
+    
+    level += 1
+    push!(edges_on_level, [])
+    
+    s = 0
+    
+    for edge in edges_on_level[level - 1]
+      if !is_terminated(edge)
+        l = end_point(edge) - ram_pts_nr
+        k = mod(start_point(edge), ram_pts_nr) + 1
+        
+        for i in (1:ram_pts_nr)
+          if (l in ramification_points[k][2]) && !(k in branch(edge))
+            new_edge = TretkoffEdge(end_point(edge), k, level, vcat(branch(edge), k))
+            s+=1
+            set_position(new_edge, s)
+            push!(edges_on_level[level], new_edge)
+          end
+          k = mod(k, ram_pts_nr) + 1
+        end 
+      end
+    end
+    
+    sorted_edges = sort(edges_on_level[level], lt = (a,b) -> end_point(a) < end_point(b))
+    for edge in sorted_edges
+      if end_point(edge) in vertices
+        terminate(edge)
+        push!(terminated_edges, edge)
+      else
+        push!(vertices, end_point(edge))
+      end
+    end
+    
+    all_branches_terminated = true
+    for edge in edges_on_level[level]
+      if !is_terminated(edge)
+        all_branches_terminated = false
+      end
+    end
+    
+  end
+  
+  terminated_edges_nr = (4*genus + 2*n - 2)
+  PQ_size = divexact(terminated_edges_nr, 2)
+  @req length(terminated_edges) == terminated_edges_nr "The number of terminated edges is wrong. There is a bug in the code."
+  
+  function compare_branches(e1::TretkoffEdge, e2::TretkoffEdge)
+    l1 = edge_level(e1)
+    l2 = edge_level(e2)
+    if l1 == l2
+      return get_position(e1) < get_position(e2)
+    elseif l1 < l2
+    
+      e_temp = TretkoffEdge(branch(e2)[l1], branch(e2)[l1 + 1])
+      i = findfirst(is_equal(e_temp), edges_on_level[l1])
+      return compare_branches(e1, edges_on_level[l1][i])
+    else
+      return !compare_branches(e2, e1)
+    end
+  end
+  
+  sort!(terminated_edges, lt = compare_branches)
+  
+  reverse!(terminated_edges)
+  
+  P = []
+  QQ = []
+  Q = Vector{TretkoffEdge}(undef, PQ_size)
+  l = 1
+  
+  for k in (1:terminated_edges_nr)
+    edge = terminated_edges[k]
+    set_position(edge, k)
+    if PQ(edge)
+      push!(P, edge)
+      set_label(edge, l)
+      l +=1
+    else
+      push!(QQ,edge)
+    end
+  end
+  
+  for edge in QQ
+    l = findfirst(is_equal(reverse(edge)), P)
+    set_label(edge, l)
+    Q[l] = edge
+  end
+  
+  cycles_list = []
+  
+  for i in (1:PQ_size)
+    cycle = vcat(branch(P[i]), reverse(branch(Q[i])[1:end-2]))
+    k = 1
+    while k <= length(cycle) - 1
+      cycle[k] -= ram_pts_nr
+      cycle[k+1] = ramification_points[cycle[k+1]][1]
+      k +=2
+    end
+    
+    cycle[k] -= ram_pts_nr
+    push!(cycles_list, cycle)
+  end
+  
+  
+  A = zero_matrix(Int, PQ_size, PQ_size)
+  for i in (1:PQ_size)
+    j = mod(get_position(P[i]), terminated_edges_nr) + 1
+    while true
+      next_edge = terminated_edges[j]
+      if PQ(next_edge)
+        A[get_label(next_edge), i] +=1
+      else
+        if get_label(next_edge) == i
+          break
+        else
+          A[get_label(next_edge), i] -=1
+        end
+      end
+      j = mod(j, terminated_edges_nr) + 1
+    end
+  end
+  
+  @req rank(A) == 2*genus "Computed matrix has the wrong rank. There is a bug in the code."
+  K = matrix(ZZ, A)
+  return cycles, K, symplectic_reduction(K)
+end
+
+function symplectic_reduction(K::MatrixElem{Int})
+
+  @req is_zero(K + transpose(K)) "Matrix needs to be skew-symmetric" 
+  @req nrows(K) == ncols(K) "Matrix needs to be square"
+
+  n = nrows(K)
+  
+  function find_one_above_pivot(K::MatrixElem{fmpz}, pivot::Int)
+    for i in (pivot:n)
+      for j in (pivot:n)
+        if K[i, j] == 1
+          return [i, j]
+        end
+      end
+    end
+    return [0, 0]
+  end
+  
+  A = deepcopy(K)
+  B = one(parent(K))
+  
+  ind1 = []
+  ind2 = []
+  pivot = 1
+  
+  while pivot <= n
+    next = find_one_above_pivot(A, pivot)
+    if next == [0,0]
+      push!(ind2, pivot)
+      pivot +=1
+      continue
+    end
+    move_to_positive_pivot(next[2], next[1], pivot, A, B)
+    zeros_only = true
+    pivot_plus = pivot + 1
+    for j in (pivot + 2:n)
+      v = -A[pivot, j]
+      if v != 0
+        add_row!(A, v, pivot_plus, j)
+        add_column!(A, v, pivot_plus, j)
+        add_row!(B, v, pivot_plus, j)
+        zeros_only = false
+      end
+      v = A[pivot_plus, j]
+      if v != 0
+        add_row!(A, v, pivot, j)
+        add_column!(A, v, pivot, j)
+        add_row!(B, v, pivot, j)
+        zeros_only = false
+      end
+    end
+    if zeros_only
+      push!(ind1, [A[pivot_plus, pivot], pivot])
+      pivot += 2
+    end
+  end
+  sort!(ind1)
+  reverse!(ind1)
+  new_rows_ind = vcat([i[2] for i in ind1], [i[2] + 1 for i in ind1], ind2)
+  return [B[Int(i), 1:n] for i in new_rows_ind]
+end
+
+function move_to_positive_pivot(i::Int, j::Int, pivot::Int, A::MatrixElem{fmpz}, B::MatrixElem{fmpz})
+  pivot_plus = pivot + 1
+  v = A[i, j] 
+  is_pivot = false
+  if [i,j] == [pivot_plus, pivot] && A[pivot_plus, pivot] != v
+    is_pivot = true
+    swap_rows!(B, pivot, pivot_plus)
+    swap_rows!(A, pivot, pivot_plus)
+    swap_cols!(A, pivot, pivot_plus)
+  elseif [i,j] == [pivot, pivot_plus]
+    swap_rows!(B, pivot, pivot_plus)
+    swap_rows!(A, pivot, pivot_plus)
+    swap_cols!(A, pivot, pivot_plus)
+  elseif j != pivot && j != (pivot_plus) && i != pivot && i != (pivot_plus)
+    swap_rows!(B, pivot, j)
+    swap_rows!(B, pivot_plus, i)
+    swap_rows!(A, pivot, j)
+    swap_rows!(A, pivot_plus, i)
+    swap_cols!(A, pivot, j)
+    swap_cols!(A, pivot_plus, i)
+  elseif j == pivot 
+    swap_rows!(B, pivot_plus, i)
+    swap_rows!(A, pivot_plus, i)
+    swap_cols!(A, pivot_plus, i)
+  elseif j == pivot_plus
+    swap_rows!(B, pivot, i)
+    swap_rows!(A, pivot, i)
+    swap_cols!(A, pivot, i)
+  elseif i == pivot 
+    swap_rows!(B, pivot_plus, j)
+    swap_rows!(A, pivot_plus, j)
+    swap_cols!(A, pivot_plus, j)
+  elseif i == pivot_plus
+    swap_rows!(B, pivot, j)
+    swap_rows!(A, pivot, j)
+    swap_cols!(A, pivot, j)
+  end
+  if A[pivot_plus, pivot] != v && !is_pivot
+    swap_rows!(B, pivot, pivot_plus)
+    swap_rows!(A, pivot, pivot_plus)
+    swap_cols!(A, pivot, pivot_plus)
+  end
+end
 #Follows algorithm 4.3.1 in Neurohr
 function fundamental_group_of_punctured_P1(RS::RiemannSurface, abel_jacobi::Bool = true)
   
