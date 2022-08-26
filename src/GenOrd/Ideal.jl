@@ -282,10 +282,12 @@ function Hecke.colon(a::GenOrdIdl, b::GenOrdIdl)
 
   bmatinv = basis_mat_inv(a, copy = false)
 
-  n = representation_matrix(B[1])*bmatinv
+  R = base_ring(bmatinv)
+
+  n = change_base_ring(R, representation_matrix(B[1]))*bmatinv
   m, d = integral_split(n, coefficient_ring(O))
   for i in 2:length(B)
-    n = representation_matrix(B[i])*bmatinv
+    n = change_base_ring(R, representation_matrix(B[i]))*bmatinv
     mm, dd = integral_split(n, coefficient_ring(O))
     l = lcm(dd, d)
     if l == d && l == dd
