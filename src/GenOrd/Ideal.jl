@@ -706,7 +706,8 @@ function Hecke.AlgAss(O::GenOrd, I::GenOrdIdl, p::RingElem)
 
   let BO = BO, basis_elts = basis_elts, r = r
     function _preimage(a::AlgAssElem)
-      return O(coefficients(a))
+      ca = coefficients(a)
+      return sum(phi_inv(ca[i]) * BO[basis_elts[i]] for i in 1:length(ca))
     end
   end
 
