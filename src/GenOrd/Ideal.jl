@@ -811,3 +811,24 @@ end
 function GenOrdToAlgAssMor(O::GenOrd, A::AlgAss{T}, _image, _preimage) where {T}
   return AbsOrdToAlgAssMor{typeof(O), T}(O, A, _image, _preimage)
 end
+
+
+################################################################################
+#
+#  Misc.
+#
+################################################################################
+
+
+function Hecke.characteristic(R::Generic.ResField{Hecke.GenOrdElem{Generic.FunctionFieldElem{T}, KInftyElem{T}}}) where T<:Union{fmpq, gfp_elem}
+  return characteristic(function_field(base_ring(R)))
+end
+
+function Hecke.characteristic(R::Generic.ResField{Hecke.GenOrdElem{Generic.FunctionFieldElem{fmpq}, fmpq_poly}})
+  return 0
+end
+
+function Hecke.characteristic(R::Generic.ResField{Hecke.GenOrdElem{Generic.FunctionFieldElem{gfp_elem}, gfp_poly}})
+  return characteristic(function_field(base_ring(R)))
+end
+
