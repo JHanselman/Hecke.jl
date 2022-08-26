@@ -38,6 +38,50 @@ function gauss_legendre_integration_points(N::T, prec::Int = 100) where T <: Int
   return abscissae, weights
 end
 
+function gauss_legendre_path_parameters(points, gamma::CPath, prec::Int)
+
+  if path_type(gamma) == 1
+    split_line_segment(points, gamma, prec)
+  end
+end
+
+function split_line_segment(points, gamma::CPath, prec::Int)
+  
+end
+
+function gauss_legendre_line_parameters(points::Vector{acb}, gamma::CPath)
+  Cc = parent(points[1])
+  Rr = ArbField(precision(Cc))
+  r_0 = Rr(5.0)
+  
+  a = start_point(gamma)
+  b = end_point(gamma)
+  
+  for p in points
+    #We find t_p such that gamma(t_p) = p , i.e. (a + b)/2 + (b - a)/2 * t_p = p
+    t_p = (2*p - a - b)//(b - a)
+    
+    #Consider ellipse E = {z in C : |z-1| + |z+1| = 2cosh(r)}
+    #Now picking r_k to be the following, we ensure that t_p lies on the boundary
+    #and not on the ellipse if radius < r_k  
+    r_k = (abs(t_p + 1) + abs(t_p - 1))//2
+    
+    @req r_k > 1 "Error in computation of r_k"
+    if r_k < r_0
+      r_0 = r_k
+      set_t_of_closest_d_point(gamma, t_p)
+    end
+  end
+  
+  #Not sure why yet
+  if r_0 == Rr(5.0)
+    push!(bounds(gamma), 1)
+  end
+
+  return r_0
+  
+end
+
 function gauss_chebyshev_integration_points(N::T, prec::Int = 100) where T <: IntegerUnion
   Rc = ArbField(prec)
   pi_N12 = const_pi(Rc)//(2*N)

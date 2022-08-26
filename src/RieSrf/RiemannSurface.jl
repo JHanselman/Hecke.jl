@@ -33,6 +33,10 @@ mutable struct CPath
   orientation::Int
   permutation::Perm{Int}
   
+  int_params::arb
+  t_of_closed_D_point::acb
+  bounds::Array{Int}
+  
   #Path type index:
   #0 is a line
   #1 is an arc
@@ -48,6 +52,7 @@ mutable struct CPath
     P.center = c
     P.radius = radius
     P.orientation = orientation
+    P.bounds = []
     
     #Line
     if path_type == 0
@@ -324,6 +329,14 @@ end
 
 function permutation(G::CPath)
   return G.permutation
+end
+
+function set_t_of_closest_d_point(G::CPath, t::acb)
+  G.t_of_closest_d_point = t
+end
+
+function get_t_of_closest_d_point(G::CPath, t::acb)
+  G.t_of_closest_d_point = t
 end
 
 function defining_polynomial(RS::RiemannSurface)
