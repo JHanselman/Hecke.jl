@@ -459,7 +459,7 @@ function Hecke.mod(x::GenOrdElem, y::GenOrdIdl)
 
   O = order(y)
   d = degree(O)
-  a = change_base_ring(O.R,coordinates(x)).entries
+  a = base_ring(O).(coordinates(x))
 
   c = basis_matrix(y)
   t = O.R(0)
@@ -469,7 +469,7 @@ function Hecke.mod(x::GenOrdElem, y::GenOrdIdl)
       a[j] = a[j] - t*c[i,j]
     end
   end
-  z = O([a[i] for i in 1:lenth(a)])
+  z = O([a[i] for i in 1:length(a)])
   return z
 end
 
@@ -698,7 +698,7 @@ function Hecke.AlgAss(O::GenOrd, I::GenOrdIdl, p::RingElem)
   let I = I, A = A, basis_elts = basis_elts, FQ = FQ
     function _image(a::GenOrdElem)
       c = coordinates(mod(a, I))
-      return A([ FQ(numerator(c[i]))//FQ(denominator(c[i])) for i in basis_elts ])
+      return A([phi(O.R(c[i])) for i in basis_elts ])
     end
   end
 
