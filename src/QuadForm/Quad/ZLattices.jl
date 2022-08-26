@@ -1,5 +1,9 @@
 export *,+, basis_matrix, ambient_space, base_ring, base_field, root_lattice,
-       kernel_lattice, invariant_lattice, hyperbolic_plane_lattice, signature_tuple
+       kernel_lattice, invariant_lattice, hyperbolic_plane_lattice, signature_tuple,
+       root_sublattice, root_lattice_recognition, root_lattice_recognition_fundamental,
+       glue_map, overlattice, primitive_closure, is_primitive,
+       lattice_in_same_ambient_space
+
 # scope & verbose scope: :Lattice
 
 basis_matrix(L::ZLat) = L.basis_matrix
@@ -86,13 +90,13 @@ function lattice(V::QuadSpace{FlintRationalField, fmpq_mat}, B::MatElem; isbasis
 end
 
 function lattice_in_same_ambient_space(L::ZLat, B::MatElem)
-  V = L.space
+  V = ambient_space(L)
   return lattice(V,B)
 end
 
 function rescale(G::ZLat, r)
   B = basis_matrix(G)
-  gram_space = gram_matrix(G.space)
+  gram_space = gram_matrix(ambient_space(G))
   Vr = quadratic_space(QQ, r*gram_space)
   return lattice(Vr, B)
 end
@@ -122,7 +126,14 @@ function gram_matrix(L::ZLat)
     return L.gram_matrix
   end
   b = basis_matrix(L)
-  G = b * gram_matrix(ambient_space(L)) * transpose(b)
+  V = ambient_space(L)
+  if isone(b) && nrows(b) == dim(V)
+    G = gram_matrix(V)
+  else
+    G = inner_product(V, b)
+  end
+
+  #G = b * gram_matrix(ambient_space(L)) * transpose(b)
   L.gram_matrix = G
   return G
 end
@@ -201,6 +212,7 @@ function orthogonal_submodule(L::ZLat, S::ZLat)
   Ks = saturate(K)
   return lattice(V, Ks*B)
 end
+
 ################################################################################
 #
 #  String I/O
@@ -705,8 +717,8 @@ end
 #  Signature
 #
 ################################################################################
-signature_tuple(L::ZLat) = signature_tuple(rational_span(L))
 
+signature_tuple(L::ZLat) = signature_tuple(rational_span(L))
 
 ################################################################################
 #
@@ -1057,7 +1069,8 @@ can be disabled by setting `same_ambient = false`. Works with both definite and 
 """
 function lll(L::ZLat; same_ambient::Bool = true)
   def = is_definite(L)
-  M = change_base_ring(ZZ, gram_matrix(L))
+  G = gram_matrix(L)
+  M = change_base_ring(ZZ, denominator(G)*G)
   if def
     neg = M[1,1] < 0
     if neg
@@ -1082,8 +1095,458 @@ function lll(L::ZLat; same_ambient::Bool = true)
   end
   if same_ambient
     B2 = U*basis_matrix(L)
-    return lattice(ambient_space(L), B2)
+    return lattice(ambient_space(L), B2)::ZLat
   else
     return Zlattice(gram = G2)
   end
 end
+
+
+################################################################################
+#
+#  Root lattice recognition
+#
+################################################################################
+
+@doc Markdown.doc"""
+    root_lattice_recognition(L::ZLat)
+
+Return the ADE type of the root sublattice of `L`.
+
+Input:
+
+`L` -- a definite and integral $\ZZ$-lattice.
+
+Output:
+
+Two lists, the first one conaining the ADE types
+and the second one the irreducible root sublattices.
+
+For more recognizable gram matrices use [`root_lattice_recognition_fundamental`](@ref).
+
+# Examples
+
+```jldoctest
+julia> L = Zlattice(gram=ZZ[4  0 0  0 3  0 3  0;
+                            0 16 8 12 2 12 6 10;
+                            0  8 8  6 2  8 4  5;
+                            0 12 6 10 2  9 5  8;
+                            3  2 2  2 4  2 4  2;
+                            0 12 8  9 2 12 6  9;
+                            3  6 4  5 4  6 6  5;
+                            0 10 5  8 2  9 5  8])
+Quadratic lattice of rank 8 and degree 8 over the rationals
+
+julia> R = root_lattice_recognition(L)
+([(:A, 1), (:D, 6)], ZLat[Quadratic lattice of rank 1 and degree 8 over the rationals, Quadratic lattice of rank 6 and degree 8 over the rationals])
+```
+"""
+function root_lattice_recognition(L::ZLat)
+  return _connected_components(root_sublattice(L))
+end
+
+function _connected_components(L::ZLat)
+  L = lll(L)
+  V = ambient_space(L)
+  B = basis_matrix(L)
+  B = [B[i,:] for i in 1:nrows(B)]
+  C = fmpq_mat[]
+  components = ZLat[]
+  ADE = Tuple{Symbol,Int64}[]
+  while length(B) > 0
+    basis = fmpq_mat[]
+    b = pop!(B)
+    push!(basis, b)
+    flag = true
+    while flag
+      flag = false
+      for c in B
+        if any([inner_product(V, a, c) != 0 for a in basis])
+          push!(basis,c)
+          deleteat!(B,findfirst(==(c), B))
+          flag = true
+          break
+        end
+      end
+    end
+    S = lattice(ambient_space(L),reduce(vcat, basis))
+    push!(components, S)
+    push!(ADE, ADE_type(gram_matrix(S)))
+  end
+  @hassert :Lattice 1 sum(Int64[rank(i) for i in components])==rank(L)
+  return ADE, components
+end
+
+@doc Markdown.doc"""
+    root_lattice_recognition_fundamental(L::ZLat)
+
+Return the ADE type of the root sublattice of `L`
+as well as the corresponding irreducible root sublattices
+with basis given by a fundamental root system.
+
+Input:
+
+`L` -- a definite and integral $\ZZ$-lattice.
+
+Output:
+
+- the root sublattice, with basis given by a fundamental root system
+- the ADE types
+- a Vector consisting of the irreducible root sublattices.
+
+# Examples
+
+```jldoctest
+julia> L = Zlattice(gram=ZZ[4  0 0  0 3  0 3  0;
+                            0 16 8 12 2 12 6 10;
+                            0  8 8  6 2  8 4  5;
+                            0 12 6 10 2  9 5  8;
+                            3  2 2  2 4  2 4  2;
+                            0 12 8  9 2 12 6  9;
+                            3  6 4  5 4  6 6  5;
+                            0 10 5  8 2  9 5  8])
+Quadratic lattice of rank 8 and degree 8 over the rationals
+
+julia> R = root_lattice_recognition_fundamental(L);
+
+julia> gram_matrix(R[1])
+[2    0    0    0    0    0    0]
+[0    2    0   -1    0    0    0]
+[0    0    2   -1    0    0    0]
+[0   -1   -1    2   -1    0    0]
+[0    0    0   -1    2   -1    0]
+[0    0    0    0   -1    2   -1]
+[0    0    0    0    0   -1    2]
+
+```
+"""
+function root_lattice_recognition_fundamental(L::ZLat)
+  V = ambient_space(L)
+  ADE,components = root_lattice_recognition(L)
+  components_new = ZLat[]
+  basis = zero_matrix(QQ,0,degree(L))
+  for i in 1:length(ADE)
+    ade = ADE[i]
+    S = components[i]
+    _, trafo = _ADE_type_with_isometry_irreducible(S)
+    BS = trafo * basis_matrix(S)
+    Snew = lattice(V, BS)
+    push!(components_new, Snew)
+    basis = vcat(basis, BS)
+  end
+  C = lattice(ambient_space(L),basis)
+  return C, ADE, components_new
+end
+
+@doc Markdown.doc"""
+    ADE_type(G::MatrixElem) -> Tuple{Symbol,Int64}
+
+Return the type of the irreducible root lattice
+with gram matrix `G`.
+
+See also [`root_lattice_recognition`](@ref).
+
+# Examples
+```jldoctest
+julia> Hecke.ADE_type(gram_matrix(root_lattice(:A,3)))
+(:A, 3)
+```
+"""
+function ADE_type(G::MatrixElem)
+  r = rank(G)
+  d = abs(det(G))
+  if r == 8 && d==1
+    return (:E,8)
+  end
+  if r == 7 && d == 2
+    return (:E,7)
+  end
+  if r == 6 && d ==3
+    return (:E,6)
+  end
+  if d == r + 1
+    return (:A, r)
+  end
+  if d == 4
+    return (:D, r)
+  end
+  error("not a definite root lattice")
+end
+
+function _ADE_type_with_isometry_irreducible(L)
+  ADE = ADE_type(gram_matrix(L))
+  R = root_lattice(ADE...)
+  e = sign(gram_matrix(L)[1,1])
+  if e == -1
+    R = rescale(R,-1)
+  end
+  t, T = is_isometric(R, L, ambient_representation=false)
+  @hassert :Lattice 1 t
+  return ADE, T
+end
+
+@doc Markdown.doc"""
+    root_sublattice(L::ZLat) -> ZLat
+
+Return the sublattice spanned by the roots
+of length at most $2$.
+
+Input:
+
+`L` - a definite integral lattice
+
+Output:
+
+The sublattice of `L` spanned by all
+vectors `x` of `L` with $|x^2|\leq 2$.
+
+# Examples
+```jldoctest
+julia> L = Zlattice(gram = ZZ[2 0; 0 4]);
+
+julia> root_sublattice(L)
+Quadratic lattice of rank 1 and degree 2 over the rationals
+
+julia> basis_matrix(root_sublattice(L))
+[1   0]
+
+```
+"""
+function root_sublattice(L::ZLat)
+  V = ambient_space(L)
+  @req is_integral(L) "L must be integral"
+  @req is_definite(L) "L must be definite"
+  if is_negative_definite(L)
+    L = rescale(L,-1)
+  end
+  sv = reduce(vcat, fmpz_mat[matrix(ZZ,1,rank(L),a[1]) for a in short_vectors(L, 2)],init=zero_matrix(ZZ,0,rank(L)))
+  hnf!(sv)
+  B = sv[1:rank(sv),:]*basis_matrix(L)
+  return lattice(V, B)
+end
+
+
+################################################################################
+#
+#  Primitive extensions and glue maps
+#
+################################################################################
+
+@doc Markdown.doc"""
+    primitive_closure(M::ZLat, N::ZLat) -> ZLat
+
+Given two $\mathbb Z$-lattices `M` and `N` with $N \subseteq \mathbb{Q} M$,
+return the primitive closure $M \cap \mathbb{Q} N$ of `N` in `M`.
+
+# Examples
+
+```jldoctest
+julia> M = root_lattice(:D, 6);
+
+julia> N = lattice_in_same_ambient_space(M, 3*basis_matrix(M)[1,:]);
+
+julia> basis_matrix(N)
+[3   0   0   0   0   0]
+
+julia> N2 = primitive_closure(M, N)
+Quadratic lattice of rank 1 and degree 6 over the rationals
+
+julia> basis_matrix(N2)
+[1   0   0   0   0   0]
+
+julia> M2 = primitive_closure(dual(M), M);
+
+julia> is_integral(M2)
+false
+
+```
+"""
+function primitive_closure(M::ZLat, N::ZLat)
+  @req ambient_space(M) === ambient_space(N) "Lattices must be in the same ambient space"
+
+  ok, B = can_solve_with_solution(basis_matrix(M), basis_matrix(N), side = :left)
+
+  @req ok "N must be contained in the rational span of M"
+
+  Bz = numerator(FakeFmpqMat(B))
+  Bz = saturate(Bz)
+  return lattice(ambient_space(M), Bz*basis_matrix(M))
+end
+
+@doc Markdown.doc"""
+    is_primitive(M::ZLat, N::ZLat) -> Bool
+
+Given two $\mathbb Z$-lattices $N \subseteq M$, return whether `N` embeds
+primitively in `M`.
+
+# Examples
+
+```jldoctest
+julia> U = hyperbolic_plane_lattice(3);
+
+julia> bU = basis_matrix(U);
+
+julia> e1, e2 = bU[1,:], bU[2,:]
+([1 0], [0 1])
+
+julia> N = lattice_in_same_ambient_space(U, e1 + e2)
+Quadratic lattice of rank 1 and degree 2 over the rationals
+
+julia> is_primitive(U, N)
+true
+
+julia> M = root_lattice(:A, 3);
+
+julia> f = matrix(QQ, 3, 3, [0 1 1; -1 -1 -1; 1 1 0]);
+
+julia> N = kernel_lattice(M, f+1)
+Quadratic lattice of rank 1 and degree 3 over the rationals
+
+julia> is_primitive(M, N)
+true
+```
+"""
+function is_primitive(M::ZLat, N::ZLat)
+  @req is_sublattice(M, N) "N must be a sublattice of M"
+
+  return primitive_closure(M, N) == N
+end
+
+@doc Markdown.doc"""
+    glue_map(L::ZLat, S::ZLat, R::ZLat; check=true)
+                           -> Tuple{TorQuadModMor, TorQuadModMor, TorQuadModMor}
+
+Given three integral $\mathbb Z$-lattices `L`, `S` and `R`, with `S` and `R`
+primitive sublattices of `L` and such that the sum of the ranks of `S` and `R`
+is equal to the rank of `L`, return the glue map $\gamma$ of the primitive
+extension $S+R \subseteq L$, as well as the inclusion maps of the domain and
+codomain of $\gamma$ into the respective discriminant groups of `S` and `R`.
+
+# Example
+
+```jldoctest
+julia> M = root_lattice(:E,8);
+
+julia> f = matrix(QQ, 8, 8, [-1 -1  0  0  0  0  0  0;
+                              1  0  0  0  0  0  0  0;
+                              0  1  1  0  0  0  0  0;
+                              0  0  0  1  0  0  0  0;
+                              0  0  0  0  1  0  0  0;
+                              0  0  0  0  0  1  1  0;
+                             -2 -4 -6 -5 -4 -3 -2 -3;
+                              0  0  0  0  0  0  0  1]);
+
+julia> S = kernel_lattice(M ,f-1)
+Quadratic lattice of rank 4 and degree 8 over the rationals
+
+julia> R = kernel_lattice(M , f^2+f+1)
+Quadratic lattice of rank 4 and degree 8 over the rationals
+
+julia> glue, iS, iR = glue_map(M, S, R)
+(Map with following data
+Domain:
+=======
+TorQuadMod [4//3 0; 0 4//3]
+Codomain:
+=========
+TorQuadMod [2//3 0; 0 2//3], Map with following data
+Domain:
+=======
+TorQuadMod [4//3 0; 0 4//3]
+Codomain:
+=========
+TorQuadMod [4//3 2//3; 2//3 2//3], Map with following data
+Domain:
+=======
+TorQuadMod [2//3 0; 0 2//3]
+Codomain:
+=========
+TorQuadMod [2//3 1//3; 1//3 4//3])
+
+julia> is_bijective(glue)
+true
+```
+"""
+function glue_map(L::ZLat, S::ZLat, R::ZLat; check=true)
+  if check
+    @req is_integral(L) "The lattices must be integral"
+    @req is_primitive(L, S) && is_primitive(L, R) "S and R must be primitive in L"
+    @req iszero(basis_matrix(S)*gram_matrix(ambient_space(L))*transpose(basis_matrix(R))) "S and R must be orthogonal in L"
+    @req rank(L) == rank(S) + rank(R) "The sum of the ranks of S and R must be equal to the rank of L"
+  end
+
+  SR = S+R
+  @assert rank(SR) == rank(L)
+  orth = Hecke.orthogonal_submodule(lattice(ambient_space(L)), SR)
+  bSR = vcat(basis_matrix(S), basis_matrix(R), basis_matrix(orth))
+  ibSR = inv(bSR)
+  I = identity_matrix(QQ,degree(L))
+  prS = ibSR * I[:,1:rank(S)] * basis_matrix(S)
+  prR = ibSR * I[:,rank(S)+1:rank(R)+rank(S)] * basis_matrix(R)
+  bL = basis_matrix(L)
+  DS = discriminant_group(S)
+  DR = discriminant_group(R)
+  gens = TorQuadModElem[]
+  imgs = TorQuadModElem[]
+  for i in 1:rank(L)
+    d = bL[i,:]
+    g = DS(vec(collect(d * prS)))
+    if all(i == 0 for i in lift(g))
+      continue
+    end
+    push!(gens, g)
+    push!(imgs, DR(vec(collect(d * prR))))
+  end
+  HS, iS = sub(DS, gens)
+  HR, iR = sub(DR, imgs)
+  glue_map = hom(HS, HR, [HR(lift(i)) for i in imgs])
+  @hassert :Lattice 2 is_bijective(glue_map)
+  @hassert :Lattice 2 overlattice(glue_map) == L
+  return glue_map, iS, iR
+end
+
+@doc Markdown.doc"""
+    overlattice(glue_map::TorQuadModMor) -> ZLat
+
+Given the glue map of a primitive extension of $\mathbb Z$-lattices
+$S+R \subseteq L$, return `L`.
+
+# Example
+
+```jldoctest
+julia> M = root_lattice(:E,8);
+
+julia> f = matrix(QQ, 8, 8, [ 1  0  0  0  0  0  0  0;
+                              0  1  0  0  0  0  0  0;
+                              1  2  4  4  3  2  1  2;
+                             -2 -4 -6 -5 -4 -3 -2 -3;
+                              2  4  6  4  3  2  1  3;
+                             -1 -2 -3 -2 -1  0  0 -2;
+                              0  0  0  0  0 -1  0  0;
+                             -1 -2 -3 -3 -2 -1  0 -1]);
+
+julia> S = kernel_lattice(M ,f-1)
+Quadratic lattice of rank 4 and degree 8 over the rationals
+
+julia> R = kernel_lattice(M , f^4+f^3+f^2+f+1)
+Quadratic lattice of rank 4 and degree 8 over the rationals
+
+julia> glue, iS, iR = glue_map(M, S, R);
+
+julia> overlattice(glue) == M
+true
+```
+"""
+function overlattice(glue_map::TorQuadModMor)
+  S = relations(domain(glue_map))
+  R = relations(codomain(glue_map))
+  glue = [lift(g) + lift(glue_map(g)) for g in gens(domain(glue_map))]
+  z = zero_matrix(QQ, 0, degree(S))
+  glue = reduce(vcat, [matrix(QQ, 1, degree(S), g) for g in glue], init=z)
+  glue = vcat(basis_matrix(S + R), glue)
+  glue = FakeFmpqMat(glue)
+  B = hnf(glue)
+  B = QQ(1, denominator(glue))*change_base_ring(QQ, numerator(B))
+  return lattice(ambient_space(S), B[end-rank(S)-rank(R)+1:end,:])
+end
+
