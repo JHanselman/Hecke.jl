@@ -322,7 +322,11 @@ function Hecke.divexact(A::GenOrdIdl, b::RingElem)
     return A
   end
   O = order(A)
-  b = Hecke.AbstractAlgebra.MPolyFactor.make_monic(b)
+  if isa(b, KInftyElem)
+    b = O.R(Hecke.AbstractAlgebra.MPolyFactor.make_monic(numerator(b))//denominator(b))
+  elseif isa(b, PolyElem)
+    b = Hecke.AbstractAlgebra.MPolyFactor.make_monic(b)
+  end
   bm = divexact(basis_matrix(A), b)
   B = GenOrdIdl(O, bm)
   if false && has_basis_mat_inv(A)
