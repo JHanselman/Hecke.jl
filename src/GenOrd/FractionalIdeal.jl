@@ -28,7 +28,9 @@ function assure_has_basis_matrix(a::GenOrdFracIdl)
     error("Not a valid fractional ideal")
   end
 
-  a.basis_matrix = FakeFracFldMat(basis_matrix(numerator(a, copy = false)), denominator(a))
+  k = base_field(function_field(order(a)))
+
+  a.basis_matrix = divexact(change_base_ring(k, basis_matrix(numerator(a, copy = false))), k(denominator(a)))
   return nothing
 end
 
@@ -63,15 +65,13 @@ function basis(a::GenOrdFracIdl)
   for i in 1:d
     z = K()
     for j in 1:d
-      z = z + K(B.num[i, j])*K(Oba[j])
+      z = z + B[i, j]*K(Oba[j])
     end
-    z = divexact(z, B.den)
     res[i] = z
   end
 
   return res
 end
-
 
 ################################################################################
 #
