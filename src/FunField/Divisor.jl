@@ -2,7 +2,7 @@ using Hecke
 
 export Divisor
 
-export finite_maximal_order, infinite_maximal_order, function_field, field_of_fractions
+export finite_maximal_order, infinite_maximal_order, function_field, field_of_fractions, divisor, ideals
 
 mutable struct Divisor
   function_field::AbstractAlgebra.Generic.FunctionField
@@ -17,7 +17,7 @@ mutable struct Divisor
     K = function_field(O)
     
     @req K == function_field(Oinf) "Ideals need to belong to orders of the same function field."
-    @req isa(O, PolyRing) "First ideal needs to be an ideal over the finite order"
+    @req isa(base_ring(O), PolyRing) "First ideal needs to be an ideal over the finite order"
     @req isa(base_ring(Oinf), KInftyRing) "Second ideal needs to be an ideal over the infinite order"
     
     r.function_field = K
@@ -26,23 +26,35 @@ mutable struct Divisor
     
     return r
   end
-  
-  function Divisor(I::GenOrdIdl, J::GenOrdIdl)
-    return Divisor(GenOrdFracIdl(I), GenOrdFracIdl(J))
-  end
 
 end
 
 @attributes AbstractAlgebra.Generic.FunctionField
+
+function divisor(I::GenOrdIdl, J::GenOrdIdl)
+  return Divisor(GenOrdFracIdl(I), GenOrdFracIdl(J))
+end
+
+function divisor(I::GenOrdIdl)
+  O = order(I)
+  F = function_field(O)
+  Ofin = finite_maximal_order(F)
+  Oinf = infinite_maximal_order(F)
+  if O == Ofin
+    return divisor(I, ideal(Oinf, one(Oinf)))
+  elseif O == Oinf
+    return divisor(ideal(Ofin, one(Ofin)), I)
+  else
+    error("There is a bug in divisor")
+  end
+end
 
 function function_field(D::Divisor)
   return D.function_field
 end
 
 function ideals(D)
-
   return D.finite_ideal, D.infinite_ideal
-
 end
 
 function field_of_fractions(O::GenOrd)
@@ -81,23 +93,35 @@ function _infinite_maximal_order(K::AbstractAlgebra.Generic.FunctionField)
 end
 
 function Base.:+(D1::Divisor, D2::Divisor)
-  return Divisor(finite_ideal(D1) * finite_ideal(D2), infinite_ideal(D1) * infinite_ideal(D2))
+  D1_fin, D1_inf = ideals(D1)
+  D2_fin, D2_inf = ideals(D2)
+  return Divisor(D1_fin * D2_fin, D1_inf * D2_inf)
 end
 
 function Base.:-(D1::Divisor, D2::Divisor)
-  return Divisor(finite_ideal(D1) // finite_ideal(D2), infinite_ideal(D1) // infinite_ideal(D2))
+  D1_fin, D1_inf = ideals(D1)
+  D2_fin, D2_inf = ideals(D2)
+  return Divisor(D1_fin // D2_fin, D1_inf // D2_inf)
 end
 
 function Base.:*(n::Int, D1::Divisor)
-  return Divisor(finite_ideal(D1)^n, infinite_ideal(D1)^n)
+  D1_fin, D1_inf = ideals(D1)
+  return Divisor(D1_fin^n, D1_inf^n)
 end
 
 Base.:*(D::Divisor, n::Int) = n * D
 
-#=function RiemannRochSpace(D::Divisor)
-  OS, O_S = ideals(D)
-  V = colon(GenOrdIdl(O, one(O)), OS)
-  B = colon(GenOrdIdl(O, one(O)), O_S)
+function RiemannRochSpace(D::Divisor)
+  I_fin, I_inf = ideals(D)
+  J_fin = colon(GenOrdIdl(O, one(O)), D_fin)
+  J_inf = colon(GenOrdIdl(O, one(O)), D_inf)
+  
+  B_fin = basis_matrix(J_fin)
+  B_inf = basis_matrix(J_inf)
+  
+  M = solve(J_inf, J_fin)
+  
+  
 end
-=#
+
 

@@ -233,6 +233,7 @@ function Hecke.colon(I::GenOrdFracIdl, J::GenOrdFracIdl)
   return Hecke.colon(II, JJ)
 end
 
+Base.://(I::GenOrdFracIdl, J::GenOrdFracIdl) = colon(I, J)
 
 
 
