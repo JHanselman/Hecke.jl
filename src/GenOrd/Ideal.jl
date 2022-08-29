@@ -33,6 +33,35 @@ Return the order, of which $x$ is an ideal.
 """
 Hecke.order(a::GenOrdIdl) = a.order
 
+################################################################################
+#
+#  IO
+#
+################################################################################
+
+
+function show(io::IO, id::GenOrdIdl)
+  print(io, "Ideal of ", id.order)
+  if has_2_elem(id)
+    print(io, "\nGenerators: <", id.gen_one, ", ", id.gen_two, ">" )
+  else
+    print(io, "\nGenerators: <no 2-elts present>");
+  end
+  if has_norm(id)
+    print(io, "\nNorm: ", id.norm);
+  end
+  if has_minimum(id)
+    print(io, "\nMinimum: ", id.minimum);
+  end
+  if isdefined(id, :princ_gen)
+    print(io, "\nPrincipal generator ", id.princ_gen)
+  end
+   if isdefined(id, :basis_matrix)
+     print(io, "\nBasis_matrix \n", id.basis_matrix)
+   end
+end
+
+
 ###########################################################################################
 #
 #   Basis
@@ -262,6 +291,10 @@ end
 #
 ################################################################################
 
+function Base.:*(x::GenOrdElem, O::GenOrd)
+  return ideal(O, x)
+end
+
 function Base.:*(x::GenOrdElem, y::GenOrdIdl)
   parent(x) !== order(y) && error("GenOrds of element and ideal must be equal")
   return GenOrdIdl(parent(x), x) * y
@@ -309,6 +342,14 @@ function Hecke.colon(a::GenOrdIdl, b::GenOrdIdl)
   b = inv(divexact(change_base_ring(base_ring(field(O)), m), base_field(field(O))(d)))
   return GenOrdFracIdl(O, b)
 end
+
+# If I is not coprime to the conductor of O in the maximal order, then this might
+# not be an inverse.
+function inv(A::GenOrdIdl)
+  O = order(A)
+  return colon(O(1)*O, A)
+end
+
 
 ################################################################################
 #
@@ -369,7 +410,13 @@ function assure_has_minimum(A::GenOrdIdl)
   for i = 2:ncols(s)
     den = lcm(den, denominator(s[i]//d))
   end
-  A.minimum = Hecke.AbstractAlgebra.MPolyFactor.make_monic(den)
+  
+  if isa(b, KInftyElem)
+    A.minimum = O.R(Hecke.AbstractAlgebra.MPolyFactor.make_monic(numerator(b))//denominator(b))
+  elseif isa(b, PolyElem)
+    A.minimum = Hecke.AbstractAlgebra.MPolyFactor.make_monic(den)
+  end
+  
   return nothing
 end
 
@@ -393,18 +440,35 @@ function assure_has_norm(A::GenOrdIdl)
     return nothing
   end
 
+  O = order(A)
+
   if isdefined(A, :basis_matrix)
-    A.norm = Hecke.AbstractAlgebra.MPolyFactor.make_monic(det(basis_matrix(A)))
+    b = det(basis_matrix(A))
+    if isa(b, KInftyElem)
+      A.norm = O.R(Hecke.AbstractAlgebra.MPolyFactor.make_monic(numerator(b))//denominator(b))
+    elseif isa(b, PolyElem)
+      A.norm = Hecke.AbstractAlgebra.MPolyFactor.make_monic(b)
+    end
     return nothing
   end
 
   if has_princ_gen(A)
-    A.norm = Hecke.AbstractAlgebra.MPolyFactor.make_monic(norm(A.princ_gen))
+    b = det(basis_matrix(A))
+    if isa(b, KInftyElem)
+      A.norm = O.R(Hecke.AbstractAlgebra.MPolyFactor.make_monic(numerator(b))//denominator(b))
+    elseif isa(b, PolyElem)
+      A.norm = Hecke.AbstractAlgebra.MPolyFactor.make_monic(b)
+    end
     return nothing
   end
 
   assure_has_basis_matrix(A)
-  A.norm = Hecke.AbstractAlgebra.MPolyFactor.make_monic(det(basis_matrix(A)))
+  b = det(basis_matrix(A))
+  if isa(b, KInftyElem)
+    A.norm = O.R(Hecke.AbstractAlgebra.MPolyFactor.make_monic(numerator(b))//denominator(b))
+  elseif isa(b, PolyElem)
+    A.norm = Hecke.AbstractAlgebra.MPolyFactor.make_monic(b)
+  end
   return nothing
 end
 

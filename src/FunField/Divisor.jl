@@ -2,7 +2,14 @@ using Hecke
 
 export Divisor
 
-export finite_maximal_order, infinite_maximal_order, function_field, field_of_fractions, divisor, ideals
+export finite_maximal_order, infinite_maximal_order, function_field, field_of_fractions, divisor, ideals, riemann_roch_space
+
+################################################################################
+#
+#  Constructors
+#
+################################################################################
+
 
 mutable struct Divisor
   function_field::AbstractAlgebra.Generic.FunctionField
@@ -49,6 +56,26 @@ function divisor(I::GenOrdIdl)
   end
 end
 
+
+################################################################################
+#
+#  IO
+#
+################################################################################
+
+function show(io::IO, id::Divisor)
+  print(io, "Divisor in ideal representation:")
+  print(io, "\nFinite ideal: ", id.finite_ideal)
+  print(io, "\nInfinite ideal: ", id.infinite_ideal)
+end
+
+################################################################################
+#
+#  Field Access
+#
+################################################################################
+
+
 function function_field(D::Divisor)
   return D.function_field
 end
@@ -92,6 +119,12 @@ function _infinite_maximal_order(K::AbstractAlgebra.Generic.FunctionField)
   return Oinf
 end
 
+################################################################################
+#
+#  Divisor arithmetic
+#
+################################################################################
+
 function Base.:+(D1::Divisor, D2::Divisor)
   D1_fin, D1_inf = ideals(D1)
   D2_fin, D2_inf = ideals(D2)
@@ -111,17 +144,43 @@ end
 
 Base.:*(D::Divisor, n::Int) = n * D
 
-function RiemannRochSpace(D::Divisor)
+################################################################################
+#
+#  Riemann-Roch computation
+#
+################################################################################
+
+function riemann_roch_space(D::Divisor)
   I_fin, I_inf = ideals(D)
-  J_fin = colon(GenOrdIdl(O, one(O)), D_fin)
-  J_inf = colon(GenOrdIdl(O, one(O)), D_inf)
+  J_fin = inv(I_fin)
+  J_inf = inv(I_inf)
   
-  B_fin = basis_matrix(J_fin)
-  B_inf = basis_matrix(J_inf)
+  F = function_field(D)
+  x = gen(base_ring(F))
+  n = degree(F)
   
-  M = solve(J_inf, J_fin)
+  basis_gens = basis(J_fin)
   
+  B_fin = matrix(map(coordinates, basis_gens))
+  B_inf = matrix(map(coordinates, basis(J_inf)))
   
+  M = solve_left(B_inf, B_fin)
+  d = lcm(vec(map(denominator,collect(M))))
+  d_deg = degree(d)
+  Mnew = change_base_ring(parent(d), d*M)
+  
+  T, U = weak_popov_with_transform(Mnew)
+
+  basis_gens = change_base_ring(F, U) * basis(J_fin)
+
+  RR_basis = []
+  for i in (1:n)
+    d_i = maximum(map(degree, T[i,1:n]))
+    for j in (0: - d_i + d_deg)
+      push!(RR_basis, x^(j) * basis_gens[i])
+    end
+  end
+  return RR_basis
 end
 
 

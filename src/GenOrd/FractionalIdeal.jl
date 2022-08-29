@@ -1,6 +1,6 @@
 export GenOrdFracIdl
 
-fractional_ideal(h::GenOrdIdl) = GenOrdFracIdl
+fractional_ideal(h::GenOrdIdl) = GenOrdFracIdl(h)
 
 ################################################################################
 #
@@ -10,8 +10,27 @@ fractional_ideal(h::GenOrdIdl) = GenOrdFracIdl
 
 Hecke.order(a::GenOrdFracIdl) = a.order
 
+function_field(a::GenOrdFracIdl) = a.order.F
+
 function AbstractAlgebra.iszero(x::GenOrdFracIdl)
   return iszero(numerator(x))
+end
+
+################################################################################
+#
+#  IO
+#
+################################################################################
+
+
+function show(io::IO, id::GenOrdFracIdl)
+  if isdefined(id, :num) && isdefined(id, :den)
+    print(io, "1//(", denominator(id, copy = false), ") * ")
+    print(io, numerator(id, copy = false))
+  else
+    print(io, "Fractional ideal of ",id.order ," with basis matrix\n")
+    print(io, basis_matrix(id, copy = false))
+  end
 end
 
 ################################################################################
@@ -216,6 +235,38 @@ end
 
 Base.:*(x::GenOrdFracIdl, y::GenOrdElem) = y * x
 
+################################################################################
+#
+#  Norm
+#
+################################################################################
+
+@doc Markdown.doc"""
+    norm(I::GenOrdFracIdl) -> GenOrd
+
+Returns the norm of $I$.
+"""
+function norm(A::GenOrdFracIdl)
+  if isdefined(A, :norm)
+    return deepcopy(A.norm)
+  else
+    A.norm = norm(numerator(A, copy = false))//denominator(A, copy = false)^degree(order(A))
+    return deepcopy(A.norm)
+  end
+end
+
+################################################################################
+#
+#  Equality
+#
+################################################################################
+
+function ==(A::GenOrdFracIdl, B::GenOrdFracIdl)
+  D = inv(B)
+  E = prod(A, D)
+  C = simplify(E)
+  return isone(denominator(C, copy = false)) && isone(norm(C))
+end
 
 ################################################################################
 #
@@ -231,6 +282,19 @@ function Hecke.colon(I::GenOrdFracIdl, J::GenOrdFracIdl)
   II = numerator(I, copy = false)*O(denominator(J, copy = false))
   JJ = numerator(J, copy = false)*O(denominator(I, copy = false))
   return Hecke.colon(II, JJ)
+end
+
+function Hecke.colon(I::GenOrdIdl, J::GenOrdFracIdl)
+  return colon(fractional_ideal(I), J)
+end
+
+function Hecke.colon(I::GenOrdFracIdl, J::GenOrdIdl)
+  return colon(I, fractional_ideal(J))
+end
+
+function inv(A::GenOrdFracIdl)
+  O = order(A)
+  return colon(O(1)*O, A)
 end
 
 Base.://(I::GenOrdFracIdl, J::GenOrdFracIdl) = colon(I, J)
