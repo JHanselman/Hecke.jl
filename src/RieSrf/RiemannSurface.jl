@@ -626,10 +626,10 @@ function homology_basis(RS::RiemannSurface)
   
   @req rank(A) == 2*genus "Computed matrix has the wrong rank. There is a bug in the code."
   K = matrix(ZZ, A)
-  return cycles, K, symplectic_reduction(K)
+  return cycles_list, K, symplectic_reduction(K)
 end
 
-function symplectic_reduction(K::MatrixElem{Int})
+function symplectic_reduction(K::MatrixElem{fmpz})
 
   @req is_zero(K + transpose(K)) "Matrix needs to be skew-symmetric" 
   @req nrows(K) == ncols(K) "Matrix needs to be square"
@@ -688,7 +688,7 @@ function symplectic_reduction(K::MatrixElem{Int})
   sort!(ind1)
   reverse!(ind1)
   new_rows_ind = vcat([i[2] for i in ind1], [i[2] + 1 for i in ind1], ind2)
-  return [B[Int(i), 1:n] for i in new_rows_ind]
+  return vcat([B[Int(i), 1:n] for i in new_rows_ind])
 end
 
 function move_to_positive_pivot(i::Int, j::Int, pivot::Int, A::MatrixElem{fmpz}, B::MatrixElem{fmpz})

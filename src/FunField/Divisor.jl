@@ -57,6 +57,19 @@ function divisor(I::GenOrdIdl)
 end
 
 
+function divisor(f::Generic.FunctionFieldElem)
+  F = parent(f)
+ 
+  Ofin = finite_maximal_order(F)
+  Oinf = infinite_maximal_order(F)
+ 
+  f_num, f_denom = integral_split(f, Ofin)
+  g_num, g_denom = integral_split(f, Oinf)  
+  
+  return Divisor(colon(ideal(Ofin, f_num), ideal(Ofin, f_denom)), colon(ideal(Oinf, g_num), ideal(Oinf, g_denom)))
+end
+
+
 ################################################################################
 #
 #  IO
@@ -143,6 +156,7 @@ function Base.:*(n::Int, D1::Divisor)
 end
 
 Base.:*(D::Divisor, n::Int) = n * D
+
 
 ################################################################################
 #

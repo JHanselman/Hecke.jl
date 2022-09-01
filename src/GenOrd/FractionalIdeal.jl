@@ -2,6 +2,11 @@ export GenOrdFracIdl
 
 fractional_ideal(h::GenOrdIdl) = GenOrdFracIdl(h)
 
+function fractional_ideal(O::GenOrd, M::MatElem)
+  @assert base_ring(M) == base_ring(function_field(O))
+  return GenOrdFracIdl(O, M)
+end
+
 ################################################################################
 #
 #  Fractional Ideals
