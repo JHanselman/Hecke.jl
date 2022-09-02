@@ -212,22 +212,14 @@ function support(D)
   return union(finite_support(D), infinite_support(D))
 end
 
-function finite_support(D::Divisor; copy::Bool = true)
+function finite_support(D::Divisor)
   assure_has_support(D)
-  if copy
-    return deepcopy(D.finite_support)
-  else
-    return D.finite_support
-  end
+  return D.finite_support
 end
 
-function infinite_support(D::Divisor; copy::Bool = true)
+function infinite_support(D::Divisor)
   assure_has_support(D)
-  if copy
-    return deepcopy(D.infinite_support)
-  else
-    return D.infinite_support
-  end
+  return D.infinite_support
 end
 
 function zero_divisor(D::Divisor)
