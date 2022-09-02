@@ -2,7 +2,7 @@ using Hecke
 
 export Divisor
 
-export finite_maximal_order, infinite_maximal_order, function_field, field_of_fractions, divisor, ideals, riemann_roch_space, support, zero_divisor, pole_divisor, finite_support, infinite_support, canonical_divisor, different_divisor, basis_of_differentials, degree, dimension
+export finite_maximal_order, infinite_maximal_order, function_field, field_of_fractions, divisor, ideals, riemann_roch_space, support, zero_divisor, pole_divisor, finite_support, infinite_support, canonical_divisor, different_divisor, basis_of_differentials, degree, dimension, index_of_speciality
 
 ################################################################################
 #
@@ -15,8 +15,8 @@ mutable struct Divisor
   function_field::AbstractAlgebra.Generic.FunctionField
   finite_ideal::GenOrdFracIdl
   infinite_ideal::GenOrdFracIdl
-  finite_support::Vector{Pair{Hecke.GenOrdIdl, Int64}}
-  infinite_support::Vector{Pair{Hecke.GenOrdIdl, Int64}}
+  finite_support::Dict{Hecke.GenOrdIdl, Int64}
+  infinite_support::Dict{Hecke.GenOrdIdl, Int64}
 
   function Divisor(I::GenOrdFracIdl, J::GenOrdFracIdl)
     r = new()
@@ -170,7 +170,32 @@ end
 function Base.:+(D1::Divisor, D2::Divisor)
   D1_fin, D1_inf = ideals(D1)
   D2_fin, D2_inf = ideals(D2)
-  return Divisor(D1_fin * D2_fin, D1_inf * D2_inf)
+  Dnew = Divisor(D1_fin * D2_fin, D1_inf * D2_inf)
+  
+  if has_support(D1) && has_support(D2)
+    P = union(keys(D1.finite_support), keys(D2.finite_support))
+    fin_support = Dict{GenOrdIdl,Int}()
+    for p in P
+      p_val = valuation(p, D1) + valuation(p, D2)
+      if p_val != 0
+        fin_support[p] = p_val
+      end
+    end
+    
+    inf_support = Dict{GenOrdIdl,Int}()
+    P_inf = union(keys(D1.infinite_support), keys(D2.infinite_support))
+    for p in P_inf
+      p_val = valuation(p, D1) + valuation(p, D2)
+      if p_val != 0
+        fin_support[p] = p_val
+      end
+    end
+    
+    Dnew.finite_support = fin_support
+    Dnew.infinite_support = inf_support
+  end
+  
+  return Dnew
 end
 
 function Base.:-(D1::Divisor, D2::Divisor)
@@ -179,9 +204,19 @@ function Base.:-(D1::Divisor, D2::Divisor)
   return Divisor(D1_fin // D2_fin, D1_inf // D2_inf)
 end
 
-function Base.:*(n::Int, D1::Divisor)
-  D1_fin, D1_inf = ideals(D1)
-  return Divisor(D1_fin^n, D1_inf^n)
+function Base.:*(n::Int, D::Divisor)
+  I, J = ideals(D)
+  
+  Dnew = Divisor(I^n, J^n)
+  
+  if has_support(D)
+    fin_supp = finite_support(D)
+    inf_supp = infinite_support(D)
+    Dnew.finite_support = Dict((p, n*e) for (p, e) in fin_supp)
+    Dnew.infinite_support = Dict((p, n*e) for (p, e) in inf_supp)
+  end
+  
+  return Dnew
 end
 
 Base.:*(D::Divisor, n::Int) = n * D
@@ -199,27 +234,51 @@ function assure_has_support(D::Divisor)
     return nothing
   else
     D1, D2 = ideals(D)
-    D1_fac = collect(factor(D1))
-    D2_fac = collect(factor(D2))
+    D1_fac = factor(D1)
+    D2_fac = factor(D2)
     D.finite_support = D1_fac
     D.infinite_support = D2_fac
     return nothing
   end
 end
 
-function support(D)
+function support(D::Divisor)
   assure_has_support(D)
-  return union(finite_support(D), infinite_support(D))
+  return vcat(finite_support(D), infinite_support(D))
 end
+
+function valuation(D::Divisor, p::GenOrdIdl)
+  #TODO: Check p is prime
+  
+  #Might not always want to compute support for a simple valuation
+  assure_has_support(D)
+  
+  O = order(p)
+  if !isa(base_ring(O), KInftyRing)
+    fin_supp = D.finite_support
+    if haskey(fin_supp, p)
+      return fin_supp[p]
+    else
+      return 0
+    end
+  else
+    inf_supp = D.infinite_support
+    if haskey(inf_supp, p)
+      return inf_supp[p]
+    else
+      return 0
+    end
+  end
+end 
 
 function finite_support(D::Divisor)
   assure_has_support(D)
-  return D.finite_support
+  return collect(D.finite_support)
 end
 
 function infinite_support(D::Divisor)
   assure_has_support(D)
-  return D.infinite_support
+  return collect(D.infinite_support)
 end
 
 function zero_divisor(D::Divisor)
@@ -231,8 +290,8 @@ function zero_divisor(D::Divisor)
   Ofin = finite_maximal_order(F)
   Oinf = infinite_maximal_order(F)
   
-  filter!(t -> t[2]>0, supp_fin)
-  filter!(t -> t[2]>0, supp_inf)
+  supp_fin = filter(t -> t[2]>0, supp_fin)
+  supp_inf = filter(t -> t[2]>0, supp_inf)
   
   D1 = prod(map(t -> t[1]^t[2], supp_fin);init = Ofin(1)*Ofin)
   D2 = prod(map(t -> t[1]^t[2], supp_inf);init = Oinf(1)*Oinf)
@@ -249,8 +308,8 @@ function pole_divisor(D::Divisor)
   Ofin = finite_maximal_order(F)
   Oinf = infinite_maximal_order(F)
   
-  filter!(t -> t[2]<0, supp_fin)
-  filter!(t -> t[2]<0, supp_inf)
+  supp_fin = filter(t -> t[2]>0, supp_fin)
+  supp_inf = filter(t -> t[2]>0, supp_inf)
   
   D1 = prod(map(t -> t[1]^t[2], supp_fin);init = Ofin(1)*Ofin)
   D2 = prod(map(t -> t[1]^t[2], supp_inf);init = Oinf(1)*Oinf)
@@ -281,7 +340,7 @@ end
 
 function canonical_divisor(F::AbstractAlgebra.Generic.FunctionField)
   x = gen(base_ring(F))
-  return - 2*pole_divisor(F(x)) + different(F)
+  return - 2*pole_divisor(F(x)) + different_divisor(F)
 end
 
 function basis_of_differentials(F::AbstractAlgebra.Generic.FunctionField)

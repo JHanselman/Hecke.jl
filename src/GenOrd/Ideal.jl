@@ -808,6 +808,53 @@ function reduce_rows_mod_hnf!(M::MatElem, N::MatElem, rows::Vector{Int})
   return M
 end
 
+
+################################################################################
+#
+#  Primality testing
+#
+################################################################################
+
+@doc Markdown.doc"""
+    is_prime_known(A::GenOrdIdl) -> Bool
+
+Returns whether $A$ knows if it is prime.
+"""
+function is_prime_known(A::GenOrdIdl)
+  return A.is_prime != 0
+end
+
+@doc Markdown.doc"""
+    is_prime(A::NfOrdIdl) -> Bool
+
+Returns whether $A$ is a prime ideal.
+"""
+function is_prime(A::GenOrdIdl)
+  if is_prime_known(A)
+    return A.is_prime == 1
+  elseif minimum(A) == 0
+    A.is_prime = 1
+    return true
+  end
+
+  O = order(A)
+
+  
+  lp = prime_decomposition(OK, p)
+  for (P, e) in lp
+    if norm(A) != norm(P)
+      continue
+    end
+    if P.gen_two in A
+      A.is_prime = 1
+      A.splitting_type = P.splitting_type
+      return true
+    end
+  end
+  A.is_prime = 2
+  return false
+end
+
 ###############################################################################
 #
 #  Decomposition type using polygons
