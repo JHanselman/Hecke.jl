@@ -2,7 +2,7 @@ using Hecke
 
 export Divisor
 
-export finite_maximal_order, infinite_maximal_order, function_field, field_of_fractions, divisor, ideals, riemann_roch_space, support, zero_divisor, pole_divisor, finite_support, infinite_support, canonical_divisor, different_divisor, basis_of_differentials, degree, dimension, index_of_speciality
+export finite_maximal_order, infinite_maximal_order, function_field, field_of_fractions, divisor, ideals, riemann_roch_space, support, zero_divisor, pole_divisor, finite_support, infinite_support, canonical_divisor, different_divisor, basis_of_differentials, degree, dimension, index_of_speciality, is_effective
 
 ################################################################################
 #
@@ -187,7 +187,7 @@ function Base.:+(D1::Divisor, D2::Divisor)
     for p in P_inf
       p_val = valuation(D1, p) + valuation(D2, p)
       if p_val != 0
-        fin_support[p] = p_val
+        inf_support[p] = p_val
       end
     end
     
@@ -308,8 +308,8 @@ function pole_divisor(D::Divisor)
   Ofin = finite_maximal_order(F)
   Oinf = infinite_maximal_order(F)
   
-  supp_fin = filter(t -> t[2]>0, supp_fin)
-  supp_inf = filter(t -> t[2]>0, supp_inf)
+  supp_fin = filter(t -> t[2]<0, supp_fin)
+  supp_inf = filter(t -> t[2]<0, supp_inf)
   
   D1 = prod(map(t -> t[1]^t[2], supp_fin);init = Ofin(1)*Ofin)
   D2 = prod(map(t -> t[1]^t[2], supp_inf);init = Oinf(1)*Oinf)
@@ -317,9 +317,20 @@ function pole_divisor(D::Divisor)
   return divisor(D1, D2)
 end
 
+################################################################################
+#
+#  Properties
+#
+################################################################################
+
+
 function degree(D::Divisor)
   L = support(D)
   return sum(e for (f,e) in L)
+end
+
+function is_effective(D::Divisor)
+  return isempty(support(pole_divisor(D)))
 end
 
 ################################################################################
