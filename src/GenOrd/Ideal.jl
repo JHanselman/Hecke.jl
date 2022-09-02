@@ -836,7 +836,7 @@ function is_prime_known(A::GenOrdIdl)
 end
 
 @doc Markdown.doc"""
-    is_prime(A::NfOrdIdl) -> Bool
+    is_prime(A::GenOrdIdl) -> Bool
 
 Returns whether $A$ is a prime ideal.
 """
@@ -850,7 +850,6 @@ function is_prime(A::GenOrdIdl)
 
   O = order(A)
 
-  
   lp = prime_decomposition(OK, p)
   for (P, e) in lp
     if norm(A) != norm(P)

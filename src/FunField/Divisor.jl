@@ -176,7 +176,7 @@ function Base.:+(D1::Divisor, D2::Divisor)
     P = union(keys(D1.finite_support), keys(D2.finite_support))
     fin_support = Dict{GenOrdIdl,Int}()
     for p in P
-      p_val = valuation(p, D1) + valuation(p, D2)
+      p_val = valuation(D1, p) + valuation(D2, p)
       if p_val != 0
         fin_support[p] = p_val
       end
@@ -185,7 +185,7 @@ function Base.:+(D1::Divisor, D2::Divisor)
     inf_support = Dict{GenOrdIdl,Int}()
     P_inf = union(keys(D1.infinite_support), keys(D2.infinite_support))
     for p in P_inf
-      p_val = valuation(p, D1) + valuation(p, D2)
+      p_val = valuation(D1, p) + valuation(D2, p)
       if p_val != 0
         fin_support[p] = p_val
       end
