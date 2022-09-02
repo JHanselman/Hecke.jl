@@ -304,5 +304,30 @@ end
 
 Base.://(I::GenOrdFracIdl, J::GenOrdFracIdl) = colon(I, J)
 
+################################################################################
+#
+#  Factor
+#
+################################################################################
 
+function Hecke.factor(A::GenOrdFracIdl)
+  O = A.order
+  N = numerator(norm(A)) * denominator(norm(A))
+  
+  A_num = numerator(A)
+  A_den = ideal(O, denominator(A))
+  
+  factors = factor(N)
+  primes = Dict{GenOrdIdl,Int}()
+  for (f,e) in factors
+    for (p,r) in prime_decomposition(O,f)
+      p_val = valuation(p,A_num) - valuation(p, A_den)
+      if p_val != 0
+        primes[p] = p_val
+      end
+    end
+  end
+
+  return primes
+end
 

@@ -140,7 +140,10 @@ mutable struct RiemannSurface
   embedding::Union{PosInf, InfPlc}
   discriminant_points::Vector{acb}
   closed_chains::Vector{CPath}
+  function_field::AbstractAlgebra.Generic.FunctionField
+  basis_of_differentials::Vector{Any}
 
+#=
   function RiemannSurface(tau::acb_mat)
     RS = new()
     g = ncols(tau)
@@ -151,7 +154,7 @@ mutable struct RiemannSurface
     prec = precision(parent(M[1,1]))
     RS.small_period_matrix = tau
   end
-
+=#
   function RiemannSurface(f::MPolyElem, v::T, prec = 100) where T<:Union{PosInf, InfPlc}
     K = base_ring(f)
     
@@ -159,6 +162,16 @@ mutable struct RiemannSurface
     RS.defining_polynomial = f
     RS.prec = prec
     RS.embedding = v
+    
+    k = base_ring(f)
+    kx, x = RationalFunctionField(k, "x")
+    kxy, y = PolynomialRing(kx, "y")
+    f_new = f(x,y)
+    F, a = function_field(f_new)
+    diff_bas = basis_of_differentials(F)
+    RS.function_field = F
+    RS.basis_of_differentials = diff_bas
+    RS.genus = dimension(diff_bas)
     
     return RS
   end
@@ -375,6 +388,10 @@ end
 
 function radius_factor(RS::RiemannSurface)
   return ArbField(precision(RS))(2//5)
+end
+
+function function_field(RS::RiemannSurface)
+  return RS.function_field
 end
 
 function monodromy_representation(RS::RiemannSurface)

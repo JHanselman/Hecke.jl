@@ -625,14 +625,18 @@ function Hecke.factor(A::GenOrdIdl)
   primes = Dict{GenOrdIdl,Int}()
   for (f,e) in factors
     for (p,r) in prime_decomposition(O,f)
-      primes[p] = valuation(p,A)
+      p_val = valuation(p,A)
+      if p_val != 0
+        primes[p] = p_val
+      end
     end
   end
   return primes
 end
 
 function prime_decomposition(O::GenOrd, p::RingElem, degree_limit::Int = degree(O), lower_limit::Int = 0; cached::Bool = true)
-  if !(divides(index(O), p)[1])
+  #Index not well-defined for infinite maximal order
+  if !isa(base_ring(O), KInftyRing) && !(divides(index(O), p)[1])
     return prime_dec_nonindex(O, p, degree_limit, lower_limit)
   else
     return prime_dec_gen(O, p, degree_limit, lower_limit)

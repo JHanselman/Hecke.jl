@@ -2,7 +2,7 @@ using Hecke
 
 export Divisor
 
-export finite_maximal_order, infinite_maximal_order, function_field, field_of_fractions, divisor, ideals, riemann_roch_space
+export finite_maximal_order, infinite_maximal_order, function_field, field_of_fractions, divisor, ideals, riemann_roch_space, support, zero_divisor, pole_divisor, finite_support, infinite_support, canonical_divisor, different_divisor, basis_of_differentials, degree, dimension
 
 ################################################################################
 #
@@ -15,6 +15,8 @@ mutable struct Divisor
   function_field::AbstractAlgebra.Generic.FunctionField
   finite_ideal::GenOrdFracIdl
   infinite_ideal::GenOrdFracIdl
+  finite_support::Vector{Pair{Hecke.GenOrdIdl, Int64}}
+  infinite_support::Vector{Pair{Hecke.GenOrdIdl, Int64}}
 
   function Divisor(I::GenOrdFracIdl, J::GenOrdFracIdl)
     r = new()
@@ -37,6 +39,10 @@ mutable struct Divisor
 end
 
 @attributes AbstractAlgebra.Generic.FunctionField
+
+function divisor(I::GenOrdFracIdl, J::GenOrdFracIdl)
+  return Divisor(I, J)
+end
 
 function divisor(I::GenOrdIdl, J::GenOrdIdl)
   return Divisor(GenOrdFracIdl(I), GenOrdFracIdl(J))
@@ -66,9 +72,32 @@ function divisor(f::Generic.FunctionFieldElem)
   f_num, f_denom = integral_split(f, Ofin)
   g_num, g_denom = integral_split(f, Oinf)  
   
-  return Divisor(colon(ideal(Ofin, f_num), ideal(Ofin, f_denom)), colon(ideal(Oinf, g_num), ideal(Oinf, g_denom)))
+  return divisor(colon(ideal(Ofin, f_num), ideal(Ofin, f_denom)), colon(ideal(Oinf, g_num), ideal(Oinf, g_denom)))
 end
 
+function zero_divisor(f::Generic.FunctionFieldElem)
+  F = parent(f)
+ 
+  Ofin = finite_maximal_order(F)
+  Oinf = infinite_maximal_order(F)
+ 
+  f_num, f_denom = integral_split(f, Ofin)
+  g_num, g_denom = integral_split(f, Oinf)  
+  
+  return divisor(ideal(Ofin, f_num), ideal(Oinf, g_num))
+end
+
+function pole_divisor(f::Generic.FunctionFieldElem)
+  F = parent(f)
+ 
+  Ofin = finite_maximal_order(F)
+  Oinf = infinite_maximal_order(F)
+ 
+  f_num, f_denom = integral_split(f, Ofin)
+  g_num, g_denom = integral_split(f, Oinf)  
+  
+  return divisor(ideal(Ofin, f_denom), ideal(Oinf, g_denom))
+end
 
 ################################################################################
 #
@@ -157,6 +186,115 @@ end
 
 Base.:*(D::Divisor, n::Int) = n * D
 
+################################################################################
+#
+#  Support
+#
+################################################################################
+
+has_support(D::Divisor) = isdefined(D, :finite_support) && isdefined(D, :infinite_support)
+
+function assure_has_support(D::Divisor)
+  if has_support(D)
+    return nothing
+  else
+    D1, D2 = ideals(D)
+    D1_fac = collect(factor(D1))
+    D2_fac = collect(factor(D2))
+    D.finite_support = D1_fac
+    D.infinite_support = D2_fac
+    return nothing
+  end
+end
+
+function support(D)
+  assure_has_support(D)
+  return union(finite_support(D), infinite_support(D))
+end
+
+function finite_support(D::Divisor; copy::Bool = true)
+  assure_has_support(D)
+  if copy
+    return deepcopy(D.finite_support)
+  else
+    return D.finite_support
+  end
+end
+
+function infinite_support(D::Divisor; copy::Bool = true)
+  assure_has_support(D)
+  if copy
+    return deepcopy(D.infinite_support)
+  else
+    return D.infinite_support
+  end
+end
+
+function zero_divisor(D::Divisor)
+  supp_fin = finite_support(D)
+  supp_inf = infinite_support(D)
+  
+  F = function_field(D)
+  
+  Ofin = finite_maximal_order(F)
+  Oinf = infinite_maximal_order(F)
+  
+  filter!(t -> t[2]>0, supp_fin)
+  filter!(t -> t[2]>0, supp_inf)
+  
+  D1 = prod(map(t -> t[1]^t[2], supp_fin);init = Ofin(1)*Ofin)
+  D2 = prod(map(t -> t[1]^t[2], supp_inf);init = Oinf(1)*Oinf)
+  
+  return divisor(D1, D2)
+end
+
+function pole_divisor(D::Divisor)
+  supp_fin = finite_support(D)
+  supp_inf = infinite_support(D)
+  
+  F = function_field(D)
+  
+  Ofin = finite_maximal_order(F)
+  Oinf = infinite_maximal_order(F)
+  
+  filter!(t -> t[2]<0, supp_fin)
+  filter!(t -> t[2]<0, supp_inf)
+  
+  D1 = prod(map(t -> t[1]^t[2], supp_fin);init = Ofin(1)*Ofin)
+  D2 = prod(map(t -> t[1]^t[2], supp_inf);init = Oinf(1)*Oinf)
+  
+  return divisor(D1, D2)
+end
+
+function degree(D::Divisor)
+  L = support(D)
+  return sum(e for (f,e) in L)
+end
+
+################################################################################
+#
+#  Different
+#
+################################################################################
+
+function different_divisor(F::AbstractAlgebra.Generic.FunctionField)
+  return divisor(different(finite_maximal_order(F)), different(infinite_maximal_order(F)))
+end
+
+################################################################################
+#
+#  Canonical Divisor
+#
+################################################################################
+
+function canonical_divisor(F::AbstractAlgebra.Generic.FunctionField)
+  x = gen(base_ring(F))
+  return - 2*pole_divisor(F(x)) + different(F)
+end
+
+function basis_of_differentials(F::AbstractAlgebra.Generic.FunctionField)
+  return riemann_roch_space(canonical_divisor(F))
+end
 
 ################################################################################
 #
@@ -197,4 +335,13 @@ function riemann_roch_space(D::Divisor)
   return RR_basis
 end
 
+function dimension(D::Divisor)
+  return length(riemann_roch_space(D))
+end
+
+function index_of_speciality(D::Divisor)
+  F = function_field(D)
+  K = canonical_divisor(F)
+  return length(riemann_roch_space(K - D))
+end
 
