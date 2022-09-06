@@ -121,7 +121,7 @@ function theta(z::Vector{acb}, tau::acb_mat; char::Tuple{Vector{fmpz}, Vector{fm
     deriv = [zeros(R.g), zeros(R.g)]
     deriv[1][ij[1]] = 1
     deriv[2][ij[2]] = 1
-    derivs = vcat(derivs, deriv)
+    dz = vcat(dz, deriv)
   end
   
   #We seem to find more points than Agostini as we also consider lattices centered at points of the form [0,1,-1], etc.
@@ -169,7 +169,7 @@ function siegel_reduction(tau::acb_mat)
   Gamma = identity_matrix(Rc, 2*g)
   e = zero(Rc)
   
-  while e < 1
+  while e <= 1
     Y = imag(tau)
     Y = (Y + transpose(Y)) // Rc(2) #ensure matrix remains symmetric
     
@@ -189,7 +189,7 @@ function siegel_reduction(tau::acb_mat)
     end
     
     if short!= 1
-      S = swap_cols(identity_matrix(Rc, g), 1, i)
+      S = swap_cols(identity_matrix(Rc, g), 1, short)
       T = S * T
       U = S * U
     end
