@@ -150,7 +150,7 @@ polynomial h must be of degree < g + 2. Here g will be the genus of the curve.
 """
 function HyperellipticCurve(f::PolyRingElem{T}, h::PolyRingElem{T}; check::Bool = true) where T <: FieldElem
   @req is_monic(f) "Polynomial must be monic"
-  @req degree(f) >= 3 "Polynomial must be of degree 3"
+  @req degree(f) >= 3 "Polynomial must be of degree bigger than 3"
 
   return HypellCrv{T}(f, h, check)
 end
@@ -163,7 +163,7 @@ degree larger than 3.
 """
 function HyperellipticCurve(f::PolyRingElem{T}; check::Bool = true) where T <: FieldElem
   @req is_monic(f) "Polynomial must be monic"
-  @req degree(f) >= 3 "Polynomial must be of degree 3"
+  @req degree(f) >= 3 "Polynomial must be of degree bigger than 3"
   R = parent(f)
   return HypellCrv{T}(f, zero(R), check)
 end
@@ -464,6 +464,74 @@ end
 function elem_type(::Type{HypellCrv{T}}) where T
   return HypellCrvPt{T}
 end
+
+################################################################################
+#
+#  Invariants
+#
+################################################################################
+
+function transvectant(f::MPolyRingElem{T}, g::MPolyRingElem{T}, k::Int) where T
+  Kxy = parent(f)
+  K = base_ring(Kxy)
+  x, y = gens(Kxy)
+  n = max(total_degree(f),k)
+  m = max(total_degree(g),k)
+  c = factorial(m-k) * factorial(n-k) // (factorial(m) * factorial(n))
+
+  Omega, (dfx, dfy, dgx, dgy) = polynomial_ring(K, ["dfx", "dfy", "dgx", "dgy"])
+  diff_op = c * (dfx * dgy - dfy * dgx)^k
+
+  result = Kxy(0)
+  for mon in monomials(diff_op)
+    dfxy_part = derivative2(derivative2(f, x, degree(mon, dfx)), y, degree(mon, dfy))
+    dgxy_part = derivative2(derivative2(g, x, degree(mon, dgx)), y, degree(mon, dgy))
+    
+    result += coeff(diff_op,mon) * dfxy_part * dgxy_part
+  end
+  return result
+end
+
+function derivative2(f::MPolyRingElem{T}, x::MPolyRingElem{T}, n::Int) where T
+  @req n>=0 "n needs to be non-zero."
+  i = 0
+  while n > i 
+    f = derivative(f, x)
+    i +=1
+  end
+return f
+end
+
+function clebsch_invariants(f::MPolyRingElem{T}) where T
+  Kxy = parent(f)
+  x, y = gens(Kxy)
+  n = total_degree(f)
+  @req 5 <= n <= 6 "Clebsch invariants are only defined for a curve of genus 2."
+
+  i = transvectant(f, f, 4)
+  delta = transvectant(i, i, 2)
+  y1 = transvectant(f, i, 4)
+  y2 = transvectant(i, y1, 2)
+  y3 = transvectant(i, y2, 2)
+  A = transvectant(f, f, 6)
+  B = transvectant(i, i, 4)
+  C = transvectant(i, delta, 4)
+  D = transvectant(y3, y1, 2)
+
+  return [A, B, C, D]
+end 
+
+function clebsch_invariants(f::PolyRingElem{T}) where T
+  R = base_ring(f)
+  Rxz, (x, z) = polynomial_ring(R, ["x", "z"])
+  coeff_f = coefficients(f)
+  d = degree(f)
+  f_hom = sum([coeff_f[i]*x^i*z^(d - i) for i in (0:d)];init = zero(Rxz))
+  return clebsch_invariants(f_hom)
+end
+#function clebsch_invariants(C::HypellCrv)
+#  return clebsch_invariants(equation(C))
+#end 
 
 ################################################################################
 #
