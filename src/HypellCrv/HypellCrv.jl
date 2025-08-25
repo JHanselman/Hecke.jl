@@ -35,11 +35,13 @@ mutable struct HypellCrv{T}
 
     if characteristic(R) == 2
       check = false
+      #TODO: Check what d is
+      d = zero(R)
+    else 
+      d = 2^(4*g)*discriminant(f + divexact(h^2,4))
     end
-
-    d = 2^(4*g)*discriminant(f + divexact(h^2,4))
-
-    if d != 0 && check
+    if d != 0 || check == false
+      
       C = new{T}()
 
       C.f = f
@@ -446,6 +448,9 @@ function is_on_curve(C::HypellCrv{T}, coords::Vector{T}) where T
   y = coords[2]
   z = coords[3]
 
+  if all(i -> i == zero(T), [x,y,z])
+    error("(0 : 0 : 0) is not a point in projective space.")
+  end
   equ = homogeneous_equation(C)
   equ(x, y, z)
   if equ(x, y, z) == 0
@@ -511,4 +516,142 @@ function Base.hash(P::HypellCrvPt, h::UInt)
   h = hash(P[2], h)
   h = hash(P[3], h)
   return h
+end
+
+
+function repos(S2::Vector{AcbFieldElem}, S_inf::Int)
+  CC = parent(S2[1])
+  RR = ArbField(precision(CC))
+  #Precision equality 0?
+  n = length(S2) + S_inf
+  m = n - length(S2)
+  S = S2 |> filter(x -> x != 0)
+  m = m - (length(S2) - length(S))
+
+
+  S_abs = map(x-> RR(abs(x)), S)
+
+  u = log(minimum(S_abs)^2)/2
+  v = log(maximum(S_abs)^2)/2
+
+  function h(eta::ArbFieldElem)
+    result = CC(0)
+    for a in S_abs
+      result += log(a*exp(-eta) + exp(eta)/a)
+    end
+    result -= m*eta
+    return result
+  end
+
+  function dh(eta::ArbFieldElem)
+    result = RR(0)
+    for a in S_abs
+      result += (exp(2*eta) - a^2)/(exp(2*eta) + a^2)
+    end
+    result -= m
+    return result
+  end
+
+  function ddh(eta::ArbFieldElem)
+    result = RR(0)
+    for a in S_abs
+      result += 1/(cosh(eta) - log(a))^2
+    end
+    return result
+  end
+
+  #Newton iteration with bisection as fallback
+  eta0 = (u+v)/2
+  I = RR(0)
+  add_error!(I, RR(10^-20))
+  while (!contains(I, dh(eta0)))
+    
+    if dh(eta0) > 0
+      v = eta0
+    else
+      u = eta0
+    end
+
+    etatest = eta0 - dh(eta0)/ddh(eta0)
+
+    if abs(dh(etatest)) / abs(dh(eta0)) < RR(0.5)
+      eta0 = etatest
+    else 
+      if dh(eta0) > 0
+        eta0 = (eta0+u)/2
+      else
+        eta0 = (eta0+v)/2
+      end
+    end
+  end
+  delta = sum(map(x -> real(x)/(abs(x)^2 + exp(2*eta0)), S))
+  if delta >= 0
+    return true
+  else
+    return false
+  end
+end
+
+function reduce_binary_form(f::PolyRingElem)
+  R = base_ring(f)
+  coeff_f = coefficients(f)
+  Rxz, (x, z) = polynomial_ring(R, ["x", "z"])
+  n = degree(f)
+  g = div(degree(f) - 1, 2)
+  f_hom = sum([coeff_f[i]*x^i*z^(2*g + 2 - i) for i in (0:n)];init = zero(Rxz))
+  return reduce_binary_form(f_hom)
+end
+
+function reduce_binary_form(f::MPolyRingElem)
+  gamma = identity_matrix(ZZ,2)
+  CC = AcbField(200)
+  Rxz = parent(f)
+  x, z = gens(Rxz)
+  Cs, s = polynomial_ring(CC, "s")
+  Qt, t = polynomial_ring(QQ, "t")
+  while true
+    f_fin = evaluate(f, [s, Cs(1)])
+    f_inf = evaluate(f, [Qt(1), t])
+    S2 = roots(f_fin;initial_prec = 200)
+    S_inf = valuation(t, f_inf)
+    
+    if repos(map(x-> x - CC(1/2), S2), S_inf)
+      k = 0
+      l = 1
+      u = 2
+      while repos(map(x-> x - CC(u - 1/2), S2), S_inf)
+        k += 1
+        l = u
+        u = u + 2^k
+      end
+    else
+      k = 0
+      u = 0
+      l = u-1
+      while !repos(map(x-> x - CC(l + 1/2), S2), S_inf)
+        k += 1
+        u = l
+        l = l - 2^k
+      end
+    end
+
+    while u - l > 1
+      m = floor(Int, (l+u)//2)
+      if repos(map(x-> x - CC(m + 1/2), S2), S_inf)
+        l = m
+      else 
+        u = m
+      end
+    end
+
+    f = evaluate(f, [x+l*z, z])
+    gamma = gamma * matrix(ZZ, [[1,l],[0,1]])
+    f_fin = evaluate(f, [s, Cs(1)])
+    S2 = roots(f_fin;initial_prec = 200)
+    if repos(map(x-> (x+1)/(x-1), S2), S_inf)
+      return f, gamma
+    end
+    f = evaluate(f, [-z,x])
+    gamma = gamma * matrix(ZZ, [[0,-1],[1,0]])
+  end
 end

@@ -371,7 +371,7 @@ function lll_gram_indef_ternary_hyperbolic(G::MatElem{ZZRingElem}; check::Bool =
   return e*U3*G3*transpose(U3), red[2]*U3*U2*U1
 end
 
-function _check_for_lll_gram_indefinite2(A::MatElem{QQFieldElem})
+function _check_for_inite2(A::MatElem{QQFieldElem})
   O, M = Hecke._gram_schmidt(A,QQ)
   d = [sign(O[i,i]) for i=1:3]
   if abs(sum(d)) != 1 || any(i -> d[i] == 0,1:3)

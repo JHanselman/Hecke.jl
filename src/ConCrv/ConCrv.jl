@@ -18,20 +18,19 @@ mutable struct ConCrv{T}
   disc::T
 
   function ConCrv{T}(coeffs::Vector{T},check::Bool = true) where {T}
-    R = base_ring(f)
+    K = parent(coeffs[1])
+    
     if length(coeffs) == 3
-      a11, a22, a33, a12, a23, a13 = Vector([coeffs[1], coeffs[2], coeffs[3], zero(T), zero(T), zero(T)])
-    elseif length(coeffs) == 6
-      a11, a22, a33, a12, a23, a13 = coeffs
-    else
+      append!(coeffs, [zero(T), zero(T), zero(T)])
+    elseif length(coeffs) !=6
       error("Length of coefficient array must be either 3 or 6")
     end
-
+    a11, a22, a33, a12, a23, a13 = coeffs
     d = 4*a11 * a22 * a33 - a11 * a23^2 - a12^2 * a33 + a12 * a13 * a23 - a13^2 * a22
     if d != 0 && check
       C = new{T}()
-      C.f = f
-      C.base_field = R
+      C.coeffs = Tuple(coeffs)
+      C.base_field = K
       C.disc = d
     else
       error("Discriminant is zero")
@@ -70,11 +69,11 @@ mutable struct ConCrvPt{T}
       else
 
         #Eliminate denominators
-        x = numerator(coords[1]) * denominator(coords[3])
-        y = coords[2] * (denominator(coords[3]) * denominator(coords[1]))
-        z = numerator(coords[3]) * denominator(coords[1])
+        x = numerator(coords[1]) * denominator(coords[3]) * denominator(coords[2])
+        y = numerator(coords[2]) * (denominator(coords[3]) * denominator(coords[1]))
+        z = numerator(coords[3]) * denominator(coords[1]) * denominator(coords[2])
 
-        c = gcd(x, z)
+        c = gcd(x,y,z)
 
         #Eliminate gcd
         if c!= 1
@@ -111,16 +110,55 @@ end
 ################################################################################
 
 @doc raw"""
-    ConicCurve([K::Field]; check::Bool = true) -> ConCrv
+    conic_curve([K::Field], x::Vector; check::Bool = true) -> ConCrv
+Given x = [a11, a22, a33, a12, a23, a13] returns the conic given by
+a11x^2 + a22y^2 + a33z^2 + a12xy + a23yz + a13xz.
 
-Return the conic curve $y^2 + h(x)y = f(x)$. The polynomial $f$
-must be monic of degree 2g + 1 > 3 or of degree 2g + 2 > 4 and the
-polynomial h must be of degree < g + 2. Here g will be the genus of the curve.
+If x contains only three elements, i.e x = [a11, a22, a33] returns the conic given by
+a11x^2 + a22y^2 + a33z^2.
 """
-function ConicCurve(x::Vector{T}; check::Bool = true) where T <: FieldElem
+function conic_curve(x::Vector{T}; check::Bool = true) where T <: RingElem
   return ConCrv{T}(x, check)
 end
 
+function conic_curve(K::Field, x::Vector{T}; check::Bool = true) where T 
+  if T === elem_type(K)
+    return conic_curve(x, check = check)
+  else
+    return conic_curve(elem_type(K)[K(z) for z in x], check = check)
+  end
+end
+
+function conic_curve(f::MPolyRingElem{T}; check::Bool = true) where T <: RingElem
+  R = parent(f)
+  x, y, z = gens(R)
+  L = [coeff(f, x^2), coeff(f, y^2), coeff(f, z^2), coeff(f, x*y), coeff(f, y*z), coeff(f, x*z) ]
+  return ConCrv{T}(L, check)
+end
+
+function conic_curve(K::Field, f::MPolyRingElem{T}; check::Bool = true) where T <: RingElem
+  R = parent(f)
+  x, y, z = gens(R)
+  L = map(K, [coeff(f, x^2), coeff(f, y^2), coeff(f, z^2), coeff(f, x*y), coeff(f, y*z), coeff(f, x*z) ])
+  return conic_curve(L, check = check)
+
+end
+
+function conic_curve(M::MatElem{T}; check::Bool = true) where T 
+  if !is_symmetric(M)
+    error("Matrix is not symmetric.")
+  end
+  L = [M[1,1], M[2,2], M[3,3], 2*M[1,2], 2*M[2,3], 2*M[1,3]]
+  return ConCrv{T}(L, check)
+end
+
+function conic_curve(K::Field, M::MatElem{T}; check::Bool = true) where T 
+  if T === elem_type(K)
+    return conic_curve(x, check = check)
+  else
+    return conic_curve(change_base_ring(K,M), check = check)
+  end
+end
 ################################################################################
 #
 #  Field access
@@ -165,10 +203,15 @@ end
 Return the coefficients of $C$ as a tuple $(a_11, a_22, a_33, a_12, a_23, a_13)$
 such that $C$ is given by $a_11x^2 + a_22y^2 + a_33z^2 + a_12xy + a_23yz + a_13xz$.
 """
-function coefficients(C::ConCurve)
+function coefficients(C::ConCrv{T}) where T
   return C.coeffs
 end
 
+function matrix(C::ConCrv{T}) where T
+  a11, a22, a33, a12, a23, a13 = C.coeffs
+  M = numerator(matrix(QQ, 3, 3, [a11, a12//2, a13//2, a12//2, a22, a23//2, a13//2, a23//2, a33]))
+  return M
+end
 
 ################################################################################
 #
@@ -185,7 +228,7 @@ function ==(C::ConCrv{T}, D::ConCrv{T}) where T
   return coefficients(C) == coefficients(D) && base_field(C) == base_field(D)
 end
 
-function Base.hash(C::HypellCrv, h::UInt)
+function Base.hash(C::ConCrv, h::UInt)
   h = hash(base_field(C), h)
   h = hash(coefficients(C), h)
   return h
@@ -220,7 +263,7 @@ end
 Compute the discriminant of $C$.
 """
 function discriminant(C::ConCrv{T}) where T
-    return C.d
+    return C.disc
 end
 
 
@@ -253,7 +296,7 @@ end
 
 function (C::ConCrv{T})(coords::Vector{S}; check::Bool = true) where {S, T}
   if !(2 <= length(coords) <= 3)
-    error("Points need to be given in either affine coordinates (x, y) or projective coordinates (x, y, z)")
+    error("Points need to be given in either affine coordinates (x, y) or projective coordinates (x, y, z).")
   end
 
   if length(coords) == 2
@@ -261,11 +304,173 @@ function (C::ConCrv{T})(coords::Vector{S}; check::Bool = true) where {S, T}
   end
   if S === T
     parent(coords[1]) != base_field(C) &&
-        error("Objects must be defined over same field")
+        error("Objects must be defined over same field.")
     return ConCrvPt{T}(C, coords, check)
   else
     return ConCrvPt{T}(C, map(base_field(C), coords)::Vector{T}, check)
   end
+end
+
+function find_rational_point(C::ConCrv{QQFieldElem})
+  #TODO: Use Hasse principle/Hilbert symbols to detect whether a solution exists or not. 
+  #Currently it will either find something or throw an error.
+  M = matrix(C)
+  n = ncols(M)
+  if det(M) == 0
+    sol = kernel(M)[1,:]
+    return C(vec(Array(sol)))
+  end
+
+  Cmin ,_, W = minimal_model(C)
+  M = matrix(Cmin)
+
+  B, U, sol = lll_gram_indef_isotropic(M; base = true)
+  if length(sol) != 0
+    return C(vec(Array(sol*transpose(W))))
+  else
+    error("Either no point exists or there is a bug in the code.")
+  end
+end
+
+function find_rational_point(C::ConCrv{FqFieldElem})
+  K = base_field(C)
+  Kt,t = polynomial_ring(K, "t")
+  a11, a22, a33, a12, a23, a13 = C.coeffs
+  while true
+    x = rand(K)
+    f = a11*x^2 + a22*t^2 + a33 + a12*x*t + a23*t + a13*x
+    sols = roots(f)
+    if length(sols) != 0
+      y = sols[1]
+      return C([x,y,K(1)])
+    end
+  end
+end
+
+function minimal_model(C::ConCrv{QQFieldElem})
+  M = matrix(C)
+
+  detC = abs(det(M))
+  detM = det(M)
+  W = identity_matrix(ZZ,3)
+  
+  while abs(detM)!=1
+    factors = factor(detM)
+    for (p,e) in factors
+      U, d = algorithm22(M,p)
+      if valuation(detM, p) == 1
+        V = algorithm26(M, U, p)
+      elseif d==1
+        V = algorithm211(M,U,p)
+      else
+        V = algorithm214(M, U, p)
+      end
+
+      W = W*V
+      M = divexact(transpose(V) * M * V, det(V))
+    end 
+    detM = det(M)
+  end
+  K = base_field(C)
+  Kxyz,(x,y,z) = polynomial_ring(K, ["x","y","z"]) 
+
+  B, U, sol = lll_gram_indef_isotropic(M; base = true)
+
+  W = W * transpose(U)
+  W = W/content(W)
+  #Return minimized conic Cmin, map from Cmin -> C, and corresponding matrix.
+  return conic_curve(K, B), W * [x,y,z], W 
+
+end
+
+function algorithm22(M::ZZMatrix, p::ZZRingElem)
+  n = ncols(M)
+  i = n
+  d = 0
+  U = identity_matrix(ZZ, n)
+  while i > 0
+    j = i + d 
+    
+    while j > 0 && mod(M[i,j], p)==0
+      j -= 1
+    end
+
+    if j == 0
+      d+=1
+      i-=1
+      continue
+    end
+    
+    if j < i + d
+      M = swap_cols(M, j, i+d)
+      U = swap_cols(U, j, i+d)
+    end
+
+    u = lift(ZZ, inv(GF(p)(M[i,i+d])))
+
+    for k in (1:j-1)
+      a = mod(u * M[i,k], p)
+      M = add_column(M, -a, i+d, k)
+      U = add_column(U, -a, i+d, k)
+    end
+    M = mod(M, p)
+  i-=1
+  end
+  return U, d
+end
+
+function algorithm26(Q::ZZMatrix, U::ZZMatrix, p::ZZRingElem)
+  Qnew = transpose(U) * Q * U
+  if mod(Qnew[2,2], p) == 0
+    N = matrix(ZZ, [[1,0,0],[0,1,0],[0,0,p]])
+    return U*N
+  end
+  u = lift(ZZ, inv(GF(p)(Qnew[2,2])))
+  t = Qnew[3,2]^2 - Qnew[2,2]*Qnew[3,3]
+  if !is_square(GF(p)(t))
+    error("No rational point exists.")
+  end
+  delta = sqrtmod(t,p)
+  x = mod(u*(-Qnew[2,3] +delta),p)
+
+  N = matrix(ZZ, [[1,0,0],[0,p,x],[0,0,1]])
+  return U*N
+end
+
+function algorithm211(Q::ZZMatrix, U::ZZMatrix, p::ZZRingElem)
+  Qnew = transpose(U) * Q * U
+  N = matrix(ZZ, [[1,0,0],[0,p,0],[0,0,p]])
+  return U*N
+end
+
+function algorithm214(Q::ZZMatrix, U::ZZMatrix, p::ZZRingElem)
+  Qnew = transpose(U) * Q * U
+  N = matrix(ZZ, [[1,0,0],[0,1,0],[0,0,p]])
+  return U*N
+end
+
+function parametrization(C::ConCrv{QQFieldElem}, P::ConCrvPt{QQFieldElem})
+  M = matrix(C)
+  U = Hecke._complete_to_basis(matrix(ZZ,1, 3, [P[1], P[2], P[3]]))
+  M1 = U * M * transpose(U)
+
+  a = 2*M1[1,2]
+  b = -2*M1[1,3]
+  c = -2*M1[2,3]
+  d = M1[1,1]
+  e = M1[2,2]
+  M2 = matrix(QQ, 3, 3, [b,c, 0, 0,b, c,d, a, e])
+  T = transpose(U)*M2
+  R, (u,v) = polynomial_ring(QQ, ["u","v"])
+  X = T[1,1]*u^2 + T[1,2]*u*v +T[1,3]*v^2
+  Y = T[2,1]*u^2 + T[2,2]*u*v + T[2,3]*v^2
+  Z = T[3,1]*u^2 + T[3,2]*u*v +T[3,3]*v^2
+  return X, Y, Z
+end
+
+function parametrization(C::ConCrv{QQFieldElem})
+  P = find_rational_point(C)
+  return parametrization(C, P)
 end
 
 ################################################################################
@@ -292,15 +497,21 @@ Return true if `coords` defines a point on $C$ and false otherwise. The array
 `coords` must have length 2.
 """
 function is_on_curve(C::ConCrv{T}, coords::Vector{T}) where T
-  length(coords) != 3 && error("Array must be of length 3")
+  length(coords) != 3 && error("Array must be of length 3.")
   coords
   x = coords[1]
   y = coords[2]
   z = coords[3]
 
+  K = parent(x)
+
+  if all(i -> i == zero(K), [x,y,z])
+    error("(0 : 0 : 0) is not a point in projective space.")
+  end
+
   equ = equation(C)
   equ(x, y, z)
-  if equ(x, y, z) == 0
+  if equ(x, y, z) == 0 
     return true
   else
     return false
@@ -324,9 +535,9 @@ end
 #
 ################################################################################
 
-function show(io::IO, C::HypellCrv)
+function show(io::IO, C::ConCrv)
   f = equation(C)
-  print(io, "Conic curve of with equation\n $(f)")
+  print(io, "Conic curve with equation\n $(f)")
 end
 
 function show(io::IO, P::ConCrvPt)
