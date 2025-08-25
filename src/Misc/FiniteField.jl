@@ -64,7 +64,7 @@ end
 function _nf_to_fq!(a::FqFieldElem, b::AbsSimpleNumFieldElem, K::FqField)#, a_tmp::FpPolyRingElem)
   # AbsSimpleNumFieldElem -> QQPolyRingElem
   z = QQPolyRingElem()
-  ccall((:nf_elem_get_fmpq_poly, libantic), Nothing,
+  ccall((:nf_elem_get_fmpq_poly, libflint), Nothing,
         (Ref{QQPolyRingElem}, Ref{AbsSimpleNumFieldElem}, Ref{AbsSimpleNumField}), z, b, parent(b))
   z.parent = Globals.Qx
   # QQPolyRingElem -> ZZPolyRingElem, ZZRingElem
@@ -335,3 +335,23 @@ function splitting_field(f::PolyRingElem{<:FinFieldElem}; do_roots::Bool = false
   end
   return K
 end
+
+@doc raw"""
+    disc_log(b::T, x::T) where {T <: FinFieldElem}
+
+Return an integer `s` such that $b^s = x$.
+If no such `x` exists, an exception is thrown.
+
+# Examples
+```jldoctest
+julia> F = GF(3,4); a = gen(F)^21;
+
+julia> disc_log(gen(F), a)
+21
+```
+"""
+function disc_log(b::T, x::T) where {T <: FinFieldElem}
+  @assert parent(b) === parent(x)
+  return Hecke.disc_log_bs_gs(b, x, order(parent(b)))
+end
+

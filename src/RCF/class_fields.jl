@@ -12,11 +12,31 @@ function Base.show(io::IO, C::ClassField_pp{S, T}) where {S, T}
 end
 
 function Base.show(io::IO, CF::ClassField)
+  io = pretty(io)
+  print(io, "Class field with structure ", Lowercase())
+  print(io, codomain(CF.quotientmap))
+  print(io, " over ", Lowercase(), base_field(CF))
+end
+
+function Base.show(io::IO, ::MIME"text/plain", CF::ClassField)
   @show_name(io, CF)
   @show_special(io, CF)
-  print(IOContext(io, :compact => true), "Class field defined mod ",
-                   defining_modulus(CF), " of structure ",
-                   codomain(CF.quotientmap))
+  io = pretty(io)
+  println(io, "Class field")
+  print(io, Indent(), "over ", Lowercase())
+  show(io, "text/plain", base_field(CF))
+  println(io, Dedent())
+  println(io, "with modulus", Indent())
+  m = defining_modulus(CF)
+  println(io, "finite part ", m[1])
+  print(io, "infinite part")
+  println(io, Indent())
+  print(IOContext(io, :nofield => true, :typeinfo=>typeof(m[2])), m[2])
+  println(io, Dedent(), Dedent())
+  println(io, "with structure")
+  print(io, Indent())
+  print(io, codomain(CF.quotientmap))
+  print(io, Dedent())
 end
 
 ###############################################################################
@@ -691,7 +711,7 @@ function _grunwald_wang_pp(d::Dict{<:Any, Int})
 
   @assert is_prime_power(deg) #for now, to keep things simple
 
-  con = prod(lp)
+  con = 1*zk
   #complication:
   # if deg = 2^l, l >= 3 then, since there are no unramifed
   # extensions of Q_2 of this degree, 2 has to divide the conductor
@@ -720,6 +740,13 @@ function _grunwald_wang_pp(d::Dict{<:Any, Int})
   end
   P = PrimesSet(2, -1, Int(divexact(deg, s)), 1)
   st = iterate(P)
+  while true
+    if st[1] in map(minimum, lp)
+      st = iterate(P, st[2])
+    else
+      break
+    end
+  end
   PP = prime_decomposition(zk, st[1])
   iP = 1
   cnt = 0
@@ -772,7 +799,15 @@ function _grunwald_wang_pp(d::Dict{<:Any, Int})
     con *= PP[iP][1]
     iP += 1
     if length(PP) < iP
-      st = iterate(P, st[2])
+      while true
+        st = iterate(P, st[2])
+        if st[1] in map(minimum, lp)
+          continue
+        end
+        if is_coprime(st[1], minimum(con))
+          break
+        end
+      end
       PP = prime_decomposition(zk, st[1])
       iP = 1
     end

@@ -1558,6 +1558,7 @@ function radical_quadratic(T::TorQuadModule)
   g = gens(Kb)
   n = length(g)
   kergen = TorQuadModuleElem[sum(kermat[i,j]*g[j] for j in 1:n) for i in 1:nrows(kermat)]
+  append!(kergen, TorQuadModuleElem[2*i for i in g])
   Kq, iq = sub(Kb,kergen)
   @assert iszero(gram_matrix_quadratic(Kq))
   return Kq, compose(iq,ib)
@@ -1606,7 +1607,7 @@ function normal_form(T::TorQuadModule; partial=false)
     i = identity_map(T)
   end
   normal_gens = TorQuadModuleElem[]
-  prime_div = prime_divisors(exponent(N))
+  prime_div = sort!(prime_divisors(exponent(N)))
   for p in prime_div
     D_p, I_p = primary_part(N, p)
     q_p = gram_matrix_quadratic(D_p)
@@ -2302,6 +2303,8 @@ function submodules(T::TorQuadModule; kw...)
   A = abelian_group(T)
   return (sub(T, T.(StoA.(gens(S)))) for (S, StoA) in subgroups(A; kw..., fun = (x, y) -> sub(x, y, false)))
 end
+
+subgroups(T::TorQuadModule; kw...) = submodules(T; kw...)
 
 @doc raw"""
     stable_submodules(T::TorQuadModule, act::Vector{TorQuadModuleMap}; kw...)

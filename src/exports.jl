@@ -245,6 +245,7 @@ export content_ideal
 export contract
 export coordinates
 export coprime_base
+export coprime_residues
 export copy
 export cos
 export cover
@@ -681,6 +682,8 @@ export modulus_quadratic_form
 export morphisms
 export mukai_lattice
 export mul!
+export mul_dense
+export mul_sparse
 export multiples
 export multiplication_by_m_map
 export multiplication_table
@@ -724,6 +727,7 @@ export orthogonal_complement
 export orthogonal_projection
 export orthogonal_submodule
 export overlattice
+export overlattices
 export overorders
 export parametrization
 export parent
@@ -755,6 +759,7 @@ export prime_ideals_over
 export prime_ideals_up_to
 export primes
 export primitive_closure
+export primitive_root
 export principal_generator
 export principal_subfields
 export pselmer_group
@@ -950,6 +955,8 @@ export value_module
 export value_module_quadratic_form
 export vcat
 export vcat!
+export vectors_of_square_and_divisibility
+export vector_space_dim
 export volume
 export weighted_equality
 export weighted_reduction
