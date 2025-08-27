@@ -207,9 +207,16 @@ function coefficients(C::ConCrv{T}) where T
   return C.coeffs
 end
 
-function matrix(C::ConCrv{T}) where T
+function matrix(C::ConCrv{QQFieldElem}) where T
   a11, a22, a33, a12, a23, a13 = C.coeffs
   M = numerator(matrix(QQ, 3, 3, [a11, a12//2, a13//2, a12//2, a22, a23//2, a13//2, a23//2, a33]))
+  return M
+end
+
+function matrix(C::ConCrv{T}) where T <: FieldElem
+  a11, a22, a33, a12, a23, a13 = C.coeffs
+  K = parent(a11)
+  M = matrix(K, 3, 3, [a11, a12/2, a13/2, a12/2, a22, a23/2, a13/2, a23/2, a33])
   return M
 end
 
@@ -353,7 +360,7 @@ function reduce_conic(v)
   w = lcm(map(denominator, [a, b, c]))
   a, b, c = map(x -> w*x, [a, b, c])
   w = gcd(a,b,c)
-  a, b, c = map(x -> nux/w, [a, b, c])
+  a, b, c = map(x -> x/w, [a, b, c])
   lambda = mu = nu =1
   g1 = g2 = g3 =-1
   while g1*g2*g3 != 1
@@ -406,27 +413,29 @@ function reduce_conic(v)
 
 end
 
-function find_rational_point(C::ConCrv{Generic.RationalFunctionFieldElem})
-  K = base_field(C)
-  #TODO: Ensure conic is in Legendre form
-  a, b, c = coefficients(C)
+function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
+  Kt_FF = base_field(conic)
+  t_FF = gen(K_FF)
+  a, b, c = coefficients(conic)
+  a,b,c = map(numerator, [a,b,c])
+  Kt = parent(a)
+  t = gen(Kt)
   if iszero(a) 
-    return C([1,0,0])
+    return conic([1,0,0])
   end
 
   if iszero(b) 
-    return C([0,1,0])
+    return conic([0,1,0])
   end
 
   if iszero(c) 
-    return C([0,0,1])
+    return conic([0,0,1])
   end
 
   a, b, c, lambda, mu, nu= reduce_conic([a,b,c])
 
   da, db, dc = map(degree, [a,b,c])
 
-  deg1_el = false
   supp_a = Set([p for (p,e) in factor(a)])
   supp_b = Set([p for (p,e) in factor(b)])
   supp_c = Set([p for (p,e) in factor(c)])
@@ -436,7 +445,7 @@ function find_rational_point(C::ConCrv{Generic.RationalFunctionFieldElem})
   if mod(da, 2) == mod(db, 2) == mod(dc, 2) == 0
     S = union(supp_a, supp_b, supp_c)
     case = 0
-    for s in s
+    for s in S
       if degree(s) == 1
         case = 1
         delete!(supp_a, s)
@@ -452,47 +461,101 @@ function find_rational_point(C::ConCrv{Generic.RationalFunctionFieldElem})
     sol_cert = find_rational_point(conic(K, [la,lb,lc]))
   else
     Kt = parent(a)
-    sol_cert_a = []
+    sol_cert = [[],[],[]]
+
     for p in supp_a
-      Lp = residue_field(Kt, p) 
+      Lp = residue_field(Kt, p)[1]
       Lpu, u = polynomial_ring(Lp, "u")
-      fa = b * u^2 +c
+      fa = Lp(b) * u^2 + Lp(c)
       sols = roots(fa)
       if length(sols) == 0
         error("Conic contains no rational point.")
       else
-        push!(sol_cert_a, sols[1])
+        push!(sol_cert[1], [p, preimage(phi, sols[1])])
       end
     end
 
-    
-    sol_cert_b = []
     for p in supp_b
-      Lp = residue_field(Kt, p) 
+      Lp = residue_field(Kt, p)[1]
       Lpu, u = polynomial_ring(Lp, "u")
-      fb = c * u^2 +a
+      fb = Lp(c) * u^2 + Lp(a)
       sols = roots(fb)
       if length(sols) == 0
         error("Conic contains no rational point.")
       else
-        push!(sol_cert_b, sols[1])
+        push!(sol_cert[2], [p, preimage(phi, sols[1])])
       end
     end
 
-
-    sol_cert_c = []
     for p in supp_c
-      Lp = residue_field(Kt, p) 
+      Lp = residue_field(Kt, p)[1]
       Lpu, u = polynomial_ring(Lp, "u")
-      fc = a * u^2 + b
+      fc = Lp(a) * u^2 + Lp(b)
       sols = roots(fc)
       if length(sols) == 0
         error("Conic contains no rational point.")
       else
-        push!(sol_cert_c, sols[1])
+        push!(sol_cert[3], [p, preimage(phi, sols[1])])
       end
     end
   end
+
+  #Shifted all by +1 as paper has i starting at 0.
+  A = ceil(Int, (db + dc)/2) - case + 1
+  B = ceil(Int, (dc + da)/2) - case + 1
+  C = ceil(Int, (da + db)/2) - case + 1
+
+  K = base_ring(Kt) 
+
+  FXYZ, XYZ = polynomial_ring(K, A + B +C)
+  X = XYZ[(1:A)]
+  Y = XYZ[(A+1:A+B)]
+  Z = XYZ[(A+B+1:A+B+C)]
+
+  FXYZt, tt = polynomial_ring(FXYZ, "t")
+
+
+
+  X_ = sum(X[i]*tt^(i-1) for i in (1:A);init = zero(FXYZt))
+  Y_ = sum(Y[i]*tt^(i-1) for i in (1:B);init = zero(FXYZt))
+  Z_ = sum(Z[i]*tt^(i-1) for i in (1:C);init = zero(FXYZt))
+
+  E = []
+  
+  for (p, alpha) in sol_cert[1]
+    r = divrem(Y_ - evaluate(alpha,t) * Z_, evaluate(p,tt))[2]
+    for coeff in coefficients(r)
+      push!(E, coeff)
+    end
+  end
+
+  for (p, alpha) in sol_cert[2]
+    r = divrem(X_ - evaluate(alpha,t) * Z_, evaluate(p,tt))[2]
+    for coeff in coefficients(r)
+      push!(E, coeff)
+    end
+  end
+
+  for (p, alpha) in sol_cert[3]
+    r = divrem(X_ - evaluate(alpha,t) * Y_, evaluate(p,tt))[2]
+    for coeff in coefficients(r)
+      push!(E, coeff)
+    end
+  end
+  
+  M = zero_matrix(K, A+B+C, length(E))
+  for i in (1:length(E))
+    for j in (1:A+B+C)
+      M[j, i] = coeff(E[i],j)
+    end
+  end
+
+  sol = kernel(M)[1, :]
+  X_ = sum(sol[i]*t^(i-1) for i in (1:A);init = zero(Kt))
+  Y_ = sum(sol[i]*t^(i-1) for i in (1+A:A+B);init = zero(Kt))
+  Z_ = sum(sol[i]*t^(i-1) for i in (1+A+B:A+B+C);init = zero(Kt))
+
+  return conic(X_, Y_, Z_)
 end
 
 
