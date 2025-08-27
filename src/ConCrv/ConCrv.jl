@@ -347,6 +347,163 @@ function find_rational_point(C::ConCrv{FqFieldElem})
   end
 end
 
+function reduce_conic(v)
+  a, b, c = v
+ 
+  w = lcm(map(denominator, [a, b, c]))
+  a, b, c = map(x -> w*x, [a, b, c])
+  w = gcd(a,b,c)
+  a, b, c = map(x -> nux/w, [a, b, c])
+  lambda = mu = nu =1
+  g1 = g2 = g3 =-1
+  while g1*g2*g3 != 1
+    g1 = gcd(a,b)
+    a = a/g1; b = b/g1; c = c*g1; nu = g1*nu
+    g2 = gcd(a,c)
+    a = a/g2; b = g2*b; c = c/g2; mu = g2*mu
+    g3 = gcd(b,c)
+    a = g1*a; b = b/g3; c = c/g3; lambda = g3*lambda
+  end
+  a, b, c = map(numerator, [a, b, c])
+  facs_a = factor_squarefree(a)
+  facs_b = factor_squarefree(b)
+  facs_c = factor_squarefree(c)
+  Kt = parent(a)
+  #Compute a1, a2
+  a1 = one(Kt)
+  a2 = one(Kt)
+  for (p,e) in facs_a
+    f = mod(e,2)
+    a1 *= p^f 
+    a2 *= p^(e-f)
+  end
+  mu = a2 * mu
+  nu = a2* nu 
+
+  #Compute b1, b2
+  b1 = one(Kt)
+  b2 = one(Kt)
+  for (p,e) in facs_b
+    f = mod(e,2)
+    b1 *= p^f 
+    b2 *= p^(e-f)
+  end
+  lambda = b2 * lambda
+  nu = b2* nu 
+
+  #Compute c1, c2
+  c1 = one(Kt)
+  c2 = one(Kt)
+  for (p,e) in facs_c
+    f = mod(e,2)
+    c1 *= p^f 
+    c2 *= p^(e-f)
+  end
+  mu = c2 * mu
+  lambda = c2* lambda
+
+  return a1, b1, c1, lambda, mu, nu
+
+end
+
+function find_rational_point(C::ConCrv{Generic.RationalFunctionFieldElem})
+  K = base_field(C)
+  #TODO: Ensure conic is in Legendre form
+  a, b, c = coefficients(C)
+  if iszero(a) 
+    return C([1,0,0])
+  end
+
+  if iszero(b) 
+    return C([0,1,0])
+  end
+
+  if iszero(c) 
+    return C([0,0,1])
+  end
+
+  a, b, c, lambda, mu, nu= reduce_conic([a,b,c])
+
+  da, db, dc = map(degree, [a,b,c])
+
+  deg1_el = false
+  supp_a = Set([p for (p,e) in factor(a)])
+  supp_b = Set([p for (p,e) in factor(b)])
+  supp_c = Set([p for (p,e) in factor(c)])
+
+  #Determine case 
+  case = 1
+  if mod(da, 2) == mod(db, 2) == mod(dc, 2) == 0
+    S = union(supp_a, supp_b, supp_c)
+    case = 0
+    for s in s
+      if degree(s) == 1
+        case = 1
+        delete!(supp_a, s)
+        delete!(supp_b, s)
+        delete!(supp_c, s)
+        break
+      end
+    end
+  end 
+
+  if case == 0
+    la, lb, lc = map(leading_coefficient, [a,b,c])
+    sol_cert = find_rational_point(conic(K, [la,lb,lc]))
+  else
+    Kt = parent(a)
+    sol_cert_a = []
+    for p in supp_a
+      Lp = residue_field(Kt, p) 
+      Lpu, u = polynomial_ring(Lp, "u")
+      fa = b * u^2 +c
+      sols = roots(fa)
+      if length(sols) == 0
+        error("Conic contains no rational point.")
+      else
+        push!(sol_cert_a, sols[1])
+      end
+    end
+
+    
+    sol_cert_b = []
+    for p in supp_b
+      Lp = residue_field(Kt, p) 
+      Lpu, u = polynomial_ring(Lp, "u")
+      fb = c * u^2 +a
+      sols = roots(fb)
+      if length(sols) == 0
+        error("Conic contains no rational point.")
+      else
+        push!(sol_cert_b, sols[1])
+      end
+    end
+
+
+    sol_cert_c = []
+    for p in supp_c
+      Lp = residue_field(Kt, p) 
+      Lpu, u = polynomial_ring(Lp, "u")
+      fc = a * u^2 + b
+      sols = roots(fc)
+      if length(sols) == 0
+        error("Conic contains no rational point.")
+      else
+        push!(sol_cert_c, sols[1])
+      end
+    end
+  end
+end
+
+
+
+################################################################################
+#
+#  Minimal models
+#
+################################################################################
+
+
 function minimal_model(C::ConCrv{QQFieldElem})
   M = matrix(C)
 
