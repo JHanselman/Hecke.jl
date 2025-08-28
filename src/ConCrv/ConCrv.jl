@@ -207,7 +207,7 @@ function coefficients(C::ConCrv{T}) where T
   return C.coeffs
 end
 
-function matrix(C::ConCrv{QQFieldElem}) where T
+function matrix(C::ConCrv{QQFieldElem})
   a11, a22, a33, a12, a23, a13 = C.coeffs
   M = numerator(matrix(QQ, 3, 3, [a11, a12//2, a13//2, a12//2, a22, a23//2, a13//2, a23//2, a33]))
   return M

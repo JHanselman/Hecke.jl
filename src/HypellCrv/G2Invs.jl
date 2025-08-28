@@ -51,8 +51,13 @@ function igusa_clebsch_invariants(f::PolyRingElem{T}) where T
   K = base_ring(f)
   n = degree(f)
   @req 5 <= n <= 6 "Igusa-Clebsch invariants are only defined for a curve of genus 2."
-  if  characteristic(K) in [2,3,5]
-    error("Characteristic of the field cannot be 2, 3 or 5.")
+  if  characteristic(K) == 2
+    error("Characteristic of the field cannot be 2")
+  end
+
+  if characteristic(K) in [3,5]
+    igusa_invs = igusa_invariants(C)
+    return igusa_clebsch_from_igusa(igusa_invs)
   end
     A, B, C, D = clebsch_invariants(f)
     return igusa_clebsch_from_clebsch([A, B, C, D])
@@ -61,17 +66,15 @@ end
 function igusa_clebsch_invariants(C::HypellCrv)
   f, h = hyperelliptic_polynomials(C)
   K = base_ring(f)
-  
-  if  characteristic(K) in [2]
-    error("Characteristic of the field cannot be 2, 3 or 5.")
+  f = f + h^2/4
+  if  characteristic(K) == 2
+    error("Characteristic of the field cannot be 2")
   end
-  # Characteristic 3 and 5
-  #u6, u5, u4, u3, u2, u1, u0 = [coeff(f, i) for i in (0:6)]
-  #a = u0^2 * (6*u3^2 - 16*u2*u4 + 40*u1*u5 - 240*u6)
-  #b = u0^4 * (4*u2^2*u4^2 - 12*u1*u3*u4^2 - 12*u2^2*u3*u5 + 36*u1*u3^2*u5 + 4*u1*u2*u4*u5 - 80*u1^2*u5^2 + 48*u2^3*u6 - 180*u1*u2*u3*u6 + 300*u1^2*u4*u6 + 48*u4^3 - 180*u3*u4*u5 + 300*u2*u5^2 + 324*u3^2*u6 - 504*u2*u4*u6 - 540*u1*u5*u6 + 1620*u6^2)
-  #c = ?
-  #d = ?
-  return igusa_clebsch_invariants(f + h^2/4)
+  if characteristic(K) in [3,5]
+    igusa_invs = igusa_invariants(C)
+    return igusa_clebsch_from_igusa(igusa_invs)
+  end
+  return igusa_clebsch_invariants(f)
 end 
 
 function igusa_invariants(f::PolyRingElem{T}, h::PolyRingElem{T}, include_J15::Bool = false) where T

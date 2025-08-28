@@ -165,9 +165,24 @@ degree larger than 3.
 """
 function HyperellipticCurve(f::PolyRingElem{T}; check::Bool = true) where T <: FieldElem
   @req is_monic(f) "Polynomial must be monic"
-  @req degree(f) >= 3 "Polynomial must be of degree bigger than 3"
+  @req degree(f) >= 3 "Polynomial must be of degree greater or equal to 3"
   R = parent(f)
   return HypellCrv{T}(f, zero(R), check)
+end
+
+@doc raw"""
+    HyperellipticCurve(L::Vector{FieldElem}; check::Bool = true) -> HypellCrv
+
+Return the hyperelliptic curve $y^2 = f(x)$ where f = a0*x^n + ... + an
+where L = [a0,...,an]
+"""
+function HyperellipticCurve(L::Vector{T}; check::Bool = true) where T <: FieldElem
+  @req L[1] == 1 "Polynomial must be monic"
+  @req length(L) >= 4 "Polynomial must be of degree greater or equal to 3"
+  K = parent(L[1])
+  Kx, x = polynomial_ring(K)
+
+  return HypellCrv{T}(Kx(reverse(L)), check)
 end
 
 
