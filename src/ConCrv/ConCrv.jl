@@ -21,7 +21,7 @@ mutable struct ConCrv{T}
     K = parent(coeffs[1])
     
     if length(coeffs) == 3
-      append!(coeffs, [zero(T), zero(T), zero(T)])
+      append!(coeffs, [zero(K), zero(K), zero(K)])
     elseif length(coeffs) !=6
       error("Length of coefficient array must be either 3 or 6")
     end
@@ -339,6 +339,13 @@ function find_rational_point(C::ConCrv{QQFieldElem})
   end
 end
 
+function find_rational_point(C::ConCrv{AbsSimpleNumFieldElem})
+  K = base_field(C)
+  Q = quadratic_space(K, matrix(C))
+  bool, sol = is_isotropic_with_vector(Q)
+  return C(sol)
+end
+
 function find_rational_point(C::ConCrv{FqFieldElem})
   K = base_field(C)
   Kt,t = polynomial_ring(K, "t")
@@ -356,8 +363,8 @@ end
 
 function reduce_conic(v)
   a, b, c = v
- 
-  w = lcm(map(denominator, [a, b, c]))
+  
+  w = lcm([a, b, c])
   a, b, c = map(x -> w*x, [a, b, c])
   w = gcd(a,b,c)
   a, b, c = map(x -> x/w, [a, b, c])
@@ -371,7 +378,7 @@ function reduce_conic(v)
     g3 = gcd(b,c)
     a = g1*a; b = b/g3; c = c/g3; lambda = g3*lambda
   end
-  a, b, c = map(numerator, [a, b, c])
+
   facs_a = factor_squarefree(a)
   facs_b = factor_squarefree(b)
   facs_c = factor_squarefree(c)
@@ -415,8 +422,11 @@ end
 
 function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
   Kt_FF = base_field(conic)
-  t_FF = gen(K_FF)
-  a, b, c = coefficients(conic)
+  t_FF = gen(Kt_FF)
+  M = matrix(conic)
+  M,  U = Hecke._gram_schmidt(M, identity)
+  
+  a, b, c = diagonal(M)
   a,b,c = map(numerator, [a,b,c])
   Kt = parent(a)
   t = gen(Kt)
@@ -458,34 +468,35 @@ function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
 
   if case == 0
     la, lb, lc = map(leading_coefficient, [a,b,c])
-    sol_cert = find_rational_point(conic(K, [la,lb,lc]))
-  else
-    Kt = parent(a)
-    sol_cert = [[],[],[]]
+    sol_cert_0 = find_rational_point(conic(K, [la,lb,lc]))[(1:3)]
+  end
+  Kt = parent(a)
 
-    for p in supp_a
-      Lp = residue_field(Kt, p)[1]
-      Lpu, u = polynomial_ring(Lp, "u")
-      fa = Lp(b) * u^2 + Lp(c)
-      sols = roots(fa)
-      if length(sols) == 0
-        error("Conic contains no rational point.")
-      else
-        push!(sol_cert[1], [p, preimage(phi, sols[1])])
-      end
-    end
+  sol_cert = [[],[],[]]
 
-    for p in supp_b
-      Lp = residue_field(Kt, p)[1]
-      Lpu, u = polynomial_ring(Lp, "u")
-      fb = Lp(c) * u^2 + Lp(a)
-      sols = roots(fb)
-      if length(sols) == 0
-        error("Conic contains no rational point.")
-      else
-        push!(sol_cert[2], [p, preimage(phi, sols[1])])
-      end
+  for p in supp_a
+    Lp = residue_field(Kt, p)[1]
+    Lpu, u = polynomial_ring(Lp, "u")
+    fa = Lp(b) * u^2 + Lp(c)
+    sols = roots(fa)
+    if length(sols) == 0
+      error("Conic contains no rational point.")
+    else
+      push!(sol_cert[1], [p, preimage(phi, sols[1])])
     end
+  end
+
+  for p in supp_b
+    Lp = residue_field(Kt, p)[1]
+    Lpu, u = polynomial_ring(Lp, "u")
+    fb = Lp(c) * u^2 + Lp(a)
+    sols = roots(fb)
+    if length(sols) == 0
+      error("Conic contains no rational point.")
+    else
+      push!(sol_cert[2], [p, preimage(phi, sols[1])])
+    end
+  end
 
     for p in supp_c
       Lp = residue_field(Kt, p)[1]
@@ -498,7 +509,7 @@ function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
         push!(sol_cert[3], [p, preimage(phi, sols[1])])
       end
     end
-  end
+  
 
   #Shifted all by +1 as paper has i starting at 0.
   A = ceil(Int, (db + dc)/2) - case + 1
@@ -506,8 +517,11 @@ function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
   C = ceil(Int, (da + db)/2) - case + 1
 
   K = base_ring(Kt) 
-
-  FXYZ, XYZ = polynomial_ring(K, A + B +C)
+  if case == 0
+    FXYZ, XYZ = polynomial_ring(K, A + B + C + 1)
+  else
+    FXYZ, XYZ = polynomial_ring(K, A + B + C)
+  end
   X = XYZ[(1:A)]
   Y = XYZ[(A+1:A+B)]
   Z = XYZ[(A+B+1:A+B+C)]
@@ -520,7 +534,13 @@ function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
   Y_ = sum(Y[i]*tt^(i-1) for i in (1:B);init = zero(FXYZt))
   Z_ = sum(Z[i]*tt^(i-1) for i in (1:C);init = zero(FXYZt))
 
-  E = []
+  if case == 0 
+    W = XYZ[end]
+    E = [X_[1] - sol_cert_0[1]*W, Y_[1] - sol_cert_0[2]*W, Z_[1] - sol_cert_0[3]*W]
+  else
+    E = []
+  end
+  
   
   for (p, alpha) in sol_cert[1]
     r = divrem(Y_ - evaluate(alpha,t) * Z_, evaluate(p,tt))[2]
@@ -543,9 +563,9 @@ function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
     end
   end
   
-  M = zero_matrix(K, A+B+C, length(E))
+  M = zero_matrix(K, length(gens(FXYZ)), length(E))
   for i in (1:length(E))
-    for j in (1:A+B+C)
+    for j in (1:length(gens(FXYZ)))
       M[j, i] = coeff(E[i],j)
     end
   end
