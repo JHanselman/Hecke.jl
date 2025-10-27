@@ -144,13 +144,13 @@ end
 ################################################################################
 
 @doc raw"""
-    HyperellipticCurve(f::PolyRingElem, g::PolyRingElem; check::Bool = true) -> HypellCrv
+    hyperelliptic_curve(f::PolyRingElem, g::PolyRingElem; check::Bool = true) -> HypellCrv
 
 Return the hyperelliptic curve $y^2 + h(x)y = f(x)$. The polynomial $f$
 must be monic of degree 2g + 1 > 3 or of degree 2g + 2 > 4 and the
 polynomial h must be of degree < g + 2. Here g will be the genus of the curve.
 """
-function HyperellipticCurve(f::PolyRingElem{T}, h::PolyRingElem{T}; check::Bool = true) where T <: FieldElem
+function hyperelliptic_curve(f::PolyRingElem{T}, h::PolyRingElem{T}; check::Bool = true) where T <: FieldElem
   @req is_monic(f) "Polynomial must be monic"
   @req degree(f) >= 3 "Polynomial must be of degree bigger than 3"
 
@@ -158,12 +158,12 @@ function HyperellipticCurve(f::PolyRingElem{T}, h::PolyRingElem{T}; check::Bool 
 end
 
 @doc raw"""
-    HyperellipticCurve(f::PolyRingElem; check::Bool = true) -> HypellCrv
+    hyperelliptic_curve(f::PolyRingElem; check::Bool = true) -> HypellCrv
 
 Return the hyperelliptic curve $y^2 = f(x)$. The polynomial $f$ must be monic of
 degree larger than 3.
 """
-function HyperellipticCurve(f::PolyRingElem{T}; check::Bool = true) where T <: FieldElem
+function hyperelliptic_curve(f::PolyRingElem{T}; check::Bool = true) where T <: FieldElem
   @req is_monic(f) "Polynomial must be monic"
   @req degree(f) >= 3 "Polynomial must be of degree greater or equal to 3"
   R = parent(f)
@@ -171,12 +171,12 @@ function HyperellipticCurve(f::PolyRingElem{T}; check::Bool = true) where T <: F
 end
 
 @doc raw"""
-    HyperellipticCurve(L::Vector{FieldElem}; check::Bool = true) -> HypellCrv
+    hyperelliptic_curve(L::Vector{FieldElem}; check::Bool = true) -> HypellCrv
 
 Return the hyperelliptic curve $y^2 = f(x)$ where f = a0*x^n + ... + an
 where L = [a0,...,an]
 """
-function HyperellipticCurve(L::Vector{T}; check::Bool = true) where T <: FieldElem
+function hyperelliptic_curve(L::Vector{T}; check::Bool = true) where T <: FieldElem
   @req L[1] == 1 "Polynomial must be monic"
   @req length(L) >= 4 "Polynomial must be of degree greater or equal to 3"
   K = parent(L[1])
@@ -217,7 +217,7 @@ function base_change(K::Field, C::HypellCrv)
   f, h = hyperelliptic_polynomials(C)
   fnew = change_coefficient_ring(K, f)
   hnew = change_coefficient_ring(K, h)
-  return HyperellipticCurve(fnew, hnew)
+  return hyperelliptic_curve(fnew, hnew)
 end
 
 
@@ -534,6 +534,84 @@ function Base.hash(P::HypellCrvPt, h::UInt)
 end
 
 
+@doc raw"""
+    reduce_binary_form(f::PolyRingElem) -> PolyRingElem
+
+Given a binary form over QQ, compute the binary form with 
+minimal Julia covariant. 
+"""
+#Following: "Efficient reduction of binary forms", Michael Stoll.
+function reduce_binary_form(f::PolyRingElem)
+  R = base_ring(f)
+  coeff_f = coefficients(f)
+  Rxz, (x, z) = polynomial_ring(R, ["x", "z"])
+  n = degree(f)
+  g = div(degree(f) - 1, 2)
+  f_hom = sum([coeff_f[i]*x^i*z^(2*g + 2 - i) for i in (0:n)];init = zero(Rxz))
+  return evaluate(reduce_binary_form(f_hom), [gen(R), one(R)])
+end
+
+@doc raw"""
+    reduce_binary_form(f::MPolyRingElem) -> MPolyRingElem
+
+Given a binary form over QQ, compute the binary form with 
+minimal Julia covariant. 
+"""
+function reduce_binary_form(f::MPolyRingElem)
+  gamma = identity_matrix(ZZ,2)
+  CC = AcbField(200)
+  Rxz = parent(f)
+  x, z = gens(Rxz)
+  Cs, s = polynomial_ring(CC, "s")
+  Qt, t = polynomial_ring(QQ, "t")
+  while true
+    f_fin = evaluate(f, [s, Cs(1)])
+    f_inf = evaluate(f, [Qt(1), t])
+    S2 = roots(f_fin;initial_prec = 200)
+    S_inf = valuation(t, f_inf)
+    
+    if repos(map(x-> x - CC(1/2), S2), S_inf)
+      k = 0
+      l = 1
+      u = 2
+      while repos(map(x-> x - CC(u - 1/2), S2), S_inf)
+        k += 1
+        l = u
+        u = u + 2^k
+      end
+    else
+      k = 0
+      u = 0
+      l = u-1
+      while !repos(map(x-> x - CC(l + 1/2), S2), S_inf)
+        k += 1
+        u = l
+        l = l - 2^k
+      end
+    end
+
+    while u - l > 1
+      m = floor(Int, (l+u)//2)
+      if repos(map(x-> x - CC(m + 1/2), S2), S_inf)
+        l = m
+      else 
+        u = m
+      end
+    end
+
+    f = evaluate(f, [x+l*z, z])
+    gamma = gamma * matrix(ZZ, [[1,l],[0,1]])
+    f_fin = evaluate(f, [s, Cs(1)])
+    S2 = roots(f_fin;initial_prec = 200)
+    if repos(map(x-> (x+1)/(x-1), S2), S_inf)
+      return f, gamma
+    end
+    f = evaluate(f, [-z,x])
+    gamma = gamma * matrix(ZZ, [[0,-1],[1,0]])
+  end
+end
+
+
 function repos(S2::Vector{AcbFieldElem}, S_inf::Int)
   CC = parent(S2[1])
   RR = ArbField(precision(CC))
@@ -589,6 +667,7 @@ function repos(S2::Vector{AcbFieldElem}, S_inf::Int)
 
     etatest = eta0 - dh(eta0)/ddh(eta0)
 
+    #Not sure what the optimal way to balance this is.
     if abs(dh(etatest)) / abs(dh(eta0)) < RR(0.5)
       eta0 = etatest
     else 
@@ -604,69 +683,5 @@ function repos(S2::Vector{AcbFieldElem}, S_inf::Int)
     return true
   else
     return false
-  end
-end
-
-function reduce_binary_form(f::PolyRingElem)
-  R = base_ring(f)
-  coeff_f = coefficients(f)
-  Rxz, (x, z) = polynomial_ring(R, ["x", "z"])
-  n = degree(f)
-  g = div(degree(f) - 1, 2)
-  f_hom = sum([coeff_f[i]*x^i*z^(2*g + 2 - i) for i in (0:n)];init = zero(Rxz))
-  return reduce_binary_form(f_hom)
-end
-
-function reduce_binary_form(f::MPolyRingElem)
-  gamma = identity_matrix(ZZ,2)
-  CC = AcbField(200)
-  Rxz = parent(f)
-  x, z = gens(Rxz)
-  Cs, s = polynomial_ring(CC, "s")
-  Qt, t = polynomial_ring(QQ, "t")
-  while true
-    f_fin = evaluate(f, [s, Cs(1)])
-    f_inf = evaluate(f, [Qt(1), t])
-    S2 = roots(f_fin;initial_prec = 200)
-    S_inf = valuation(t, f_inf)
-    
-    if repos(map(x-> x - CC(1/2), S2), S_inf)
-      k = 0
-      l = 1
-      u = 2
-      while repos(map(x-> x - CC(u - 1/2), S2), S_inf)
-        k += 1
-        l = u
-        u = u + 2^k
-      end
-    else
-      k = 0
-      u = 0
-      l = u-1
-      while !repos(map(x-> x - CC(l + 1/2), S2), S_inf)
-        k += 1
-        u = l
-        l = l - 2^k
-      end
-    end
-
-    while u - l > 1
-      m = floor(Int, (l+u)//2)
-      if repos(map(x-> x - CC(m + 1/2), S2), S_inf)
-        l = m
-      else 
-        u = m
-      end
-    end
-
-    f = evaluate(f, [x+l*z, z])
-    gamma = gamma * matrix(ZZ, [[1,l],[0,1]])
-    f_fin = evaluate(f, [s, Cs(1)])
-    S2 = roots(f_fin;initial_prec = 200)
-    if repos(map(x-> (x+1)/(x-1), S2), S_inf)
-      return f, gamma
-    end
-    f = evaluate(f, [-z,x])
-    gamma = gamma * matrix(ZZ, [[0,-1],[1,0]])
   end
 end

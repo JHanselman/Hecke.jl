@@ -57,7 +57,6 @@ export HermLat
 export HermLocalGenus
 export HypellCrv
 export HypellCrvPt
-export HyperellipticCurve
 export IdealSet
 export InfPlc
 export Isogeny
@@ -412,6 +411,7 @@ export hom_tensor
 export homogeneous_equation
 export howell_form
 export hyperbolic_plane_lattice
+export hyperelliptic_curve
 export hyperelliptic_polynomials
 export hyperkaehler_lattice
 export id
@@ -938,6 +938,7 @@ export trace_of_frobenius
 export trailing_coefficient
 export transform
 export transform_rstu
+export transvectant
 export triangularize
 export trivial_divisor
 export trivial_morphism

@@ -6,9 +6,9 @@
     
     f1 = x^6+3*x+5
     h1 = x+2
-    C = @inferred HyperellipticCurve(f1, h1)
-    @test C == HyperellipticCurve(f1, h1)
-    @test hash(C) == hash(HyperellipticCurve(f1, h1))
+    C = @inferred hyperelliptic_curve(f1, h1)
+    @test C == hyperelliptic_curve(f1, h1)
+    @test hash(C) == hash(hyperelliptic_curve(f1, h1))
     f2, h2 = @inferred hyperelliptic_polynomials(C)
     @test f1 == f2 && h1 == h2
     @test @inferred genus(C) == 2
@@ -25,7 +25,7 @@
 
     f1 = x^9+8*x^7-5*x^6+3*x^2+7
     h1 = zero(Fx)
-    C = @inferred HyperellipticCurve(f1)
+    C = @inferred hyperelliptic_curve(f1)
     f2, h2 = @inferred hyperelliptic_polynomials(C)
     @test f1 == f2 && h1 == h2
     @test @inferred genus(C) == 4
@@ -42,7 +42,7 @@
     Qx, x = polynomial_ring(QQ, "x")
    
     f = x^6+3*x+5
-    C = @inferred HyperellipticCurve(f)
+    C = @inferred hyperelliptic_curve(f)
     P = @inferred points_with_x_coordinate(C, 1)
     @test C([1, -3, 1]) in P && C([1, 3, 1]) in P
   
@@ -55,7 +55,7 @@
     Fx, x = polynomial_ring(F, "x")
    
     f = x^6+3*x+5
-    C = @inferred HyperellipticCurve(f)
+    C = @inferred hyperelliptic_curve(f)
     P = @inferred points_with_x_coordinate(C, 8)
     @test C([F(8), F(19), F(1)]) in P && C([F(8), F(18), F(1)]) in P
   
