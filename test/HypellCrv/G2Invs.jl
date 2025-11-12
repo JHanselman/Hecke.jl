@@ -52,7 +52,7 @@
     @test weighted_equality(igusa_clebsch_invariants(C),[ F(2), F(3), F(0), F(3) ] ,[2,4,6,10])
     @test weighted_equality(igusa_invariants(C),[ F(4), F(1), F(2), F(3), F(3)] ,[2,4,6,8,10])
     @test g2_invariants(C) == [ F(3), F(3), F(4) ]
-    #@test weighted_equality(igusa_clebsch_from_igusa(igusa_invariants(C)), igusa_invariants(C), [2,4,6,10])
+    @test weighted_equality(igusa_clebsch_from_igusa(igusa_invariants(C)), igusa_invariants(C), [2,4,6,10])
     @test weighted_equality(igusa_from_g2(g2_invariants(C)), igusa_invariants(C), [2,4,6,8,10])
 
 

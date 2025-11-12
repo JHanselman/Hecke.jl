@@ -333,6 +333,23 @@ function hyperelliptic_polynomials(C::HypellCrv{T}) where T
   return (C.f, C.h)::Tuple{dense_poly_type(T), dense_poly_type(T)}
 end
 
+@doc raw"""
+    is_integral_model(C::HyperellCrv{T}) -> Bool where T<:Union{QQFieldElem, AbsSimpleNumFieldElem}
+
+Given a hyperelliptic curve $C$ over QQ or a number field $K$, return
+true if $C$ is an integral model of $C$.
+"""
+function is_integral_model(C::HypellCrv{T}) where T<:Union{QQFieldElem, AbsSimpleNumFieldElem}
+  f, h = hyperelliptic_polynomials(C)
+  coeffs = vcat(collect(coefficients(f)), collect(coefficients(h)))
+  coeffs = map(denominator, coeffs)
+  mu = lcm(coeffs)
+  if mu == 1
+    return true
+  end
+
+  return false
+end
 
 ################################################################################
 #
@@ -458,12 +475,13 @@ Return true if `coords` defines a point on $C$ and false otherwise. The array
 """
 function is_on_curve(C::HypellCrv{T}, coords::Vector{T}) where T
   length(coords) != 3 && error("Array must be of length 3")
-  coords
   x = coords[1]
   y = coords[2]
   z = coords[3]
 
-  if all(i -> i == zero(T), [x,y,z])
+  K = parent(x)
+
+  if all(i -> i == zero(K), [x,y,z])
     error("(0 : 0 : 0) is not a point in projective space.")
   end
   equ = homogeneous_equation(C)
@@ -533,31 +551,43 @@ function Base.hash(P::HypellCrvPt, h::UInt)
   return h
 end
 
-
 @doc raw"""
     reduce_binary_form(f::PolyRingElem) -> PolyRingElem
 
 Given a binary form over QQ, compute the binary form with 
 minimal Julia covariant. 
 """
-#Following: "Efficient reduction of binary forms", Michael Stoll.
+#Following the preprint "Efficient reduction of binary forms"
+# by Michael Stoll.
 function reduce_binary_form(f::PolyRingElem)
   R = base_ring(f)
+  Rx = parent(f)
   coeff_f = coefficients(f)
   Rxz, (x, z) = polynomial_ring(R, ["x", "z"])
   n = degree(f)
   g = div(degree(f) - 1, 2)
   f_hom = sum([coeff_f[i]*x^i*z^(2*g + 2 - i) for i in (0:n)];init = zero(Rxz))
-  return evaluate(reduce_binary_form(f_hom), [gen(R), one(R)])
+  f, gamma = reduce_binary_form(f_hom)
+  return evaluate(f, [gen(Rx), one(Rx)])
 end
 
 @doc raw"""
     reduce_binary_form(f::MPolyRingElem) -> MPolyRingElem
 
-Given a binary form over QQ, compute the binary form with 
+Given a binary form over QQ that is stable (i.e. f is not divisible by a 
+linear form of degree m with 2m >= deg(f)), compute the binary form with 
 minimal Julia covariant. 
 """
 function reduce_binary_form(f::MPolyRingElem)
+  #Check stability
+  n = total_degree(f)
+  ms = values(factor(f).fac)
+  for m in ms
+    if 2*m >= n 
+      error("Binary form is not stable.")
+    end
+  end
+
   gamma = identity_matrix(ZZ,2)
   CC = AcbField(200)
   Rxz = parent(f)
@@ -568,22 +598,32 @@ function reduce_binary_form(f::MPolyRingElem)
     f_fin = evaluate(f, [s, Cs(1)])
     f_inf = evaluate(f, [Qt(1), t])
     S2 = roots(f_fin;initial_prec = 200)
-    S_inf = valuation(t, f_inf)
-    
+    S_inf = valuation(f_inf, t)
+
+    # repos(map(x-> x - a, S2), S_inf) returns whether Re(zF) >= a
+    # The goal is to get -1/2 <= Re(z(F)) <= 1/2
+    # We first find u and l such that l- 1/2 <= Re(z(F)) <= u - 1/2.
     if repos(map(x-> x - CC(1/2), S2), S_inf)
       k = 0
       l = 1
       u = 2
+      # Note that in Stoll's preprint u + 1/2 is written, but to test
+      # when the value is no longer >= u - 1/2, we need u - 1/2 instead.
       while repos(map(x-> x - CC(u - 1/2), S2), S_inf)
         k += 1
         l = u
         u = u + 2^k
       end
     else
+      if repos(map(x-> x + CC(1/2), S2), S_inf)
+        return f, gamma
+      end
       k = 0
       u = 0
-      l = u-1
-      while !repos(map(x-> x - CC(l + 1/2), S2), S_inf)
+      l = -1
+      # Note that in Stoll's preprint l + 1/2 is written, but to test
+      # when the value is >= l - 1/2, we need l - 1/2 instead.
+      while !repos(map(x-> x - CC(l - 1/2), S2), S_inf)
         k += 1
         u = l
         l = l - 2^k
@@ -592,18 +632,33 @@ function reduce_binary_form(f::MPolyRingElem)
 
     while u - l > 1
       m = floor(Int, (l+u)//2)
-      if repos(map(x-> x - CC(m + 1/2), S2), S_inf)
+      # Note that in Stoll's preprint m + 1/2 is written, but to test
+      # when the value is >= m - 1/2, we need m - 1/2 instead.
+      if repos(map(x-> x - CC(m - 1/2), S2), S_inf)
         l = m
       else 
         u = m
       end
     end
 
-    f = evaluate(f, [x+l*z, z])
+    f = evaluate(f, [x + l*z, z])
     gamma = gamma * matrix(ZZ, [[1,l],[0,1]])
     f_fin = evaluate(f, [s, Cs(1)])
     S2 = roots(f_fin;initial_prec = 200)
-    if repos(map(x-> (x+1)/(x-1), S2), S_inf)
+
+    # Instead of mapping all roots to (a+1)/(a-1) by doing
+    # repos(map(x-> (x+1)/(x-1), S2), S_inf) we compute f(x+z, x-z)
+    # to also deal with the case where a = 1 (which gets mapped to infinity).
+
+    g = evaluate(f, [x + z, x - z])
+    g_fin = evaluate(g, [s, Cs(1)])
+    g_inf = evaluate(g, [Qt(1), t])
+
+    S2_flipped = roots(g_fin;initial_prec = 200)
+    S_inf_flipped = valuation(g_inf, t)
+
+    #Check |z(F)|> 1
+    if repos(S2_flipped, S_inf_flipped)
       return f, gamma
     end
     f = evaluate(f, [-z,x])
@@ -667,6 +722,7 @@ function repos(S2::Vector{AcbFieldElem}, S_inf::Int)
 
     etatest = eta0 - dh(eta0)/ddh(eta0)
 
+    #Decide whether to use Newton iteration or bisection.
     #Not sure what the optimal way to balance this is.
     if abs(dh(etatest)) / abs(dh(eta0)) < RR(0.5)
       eta0 = etatest

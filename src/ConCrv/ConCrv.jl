@@ -318,6 +318,7 @@ function (C::ConCrv{T})(coords::Vector{S}; check::Bool = true) where {S, T}
   end
 end
 
+
 function find_rational_point(C::ConCrv{QQFieldElem})
   #TODO: Use Hasse principle/Hilbert symbols to detect whether a solution exists or not. 
   #Currently it will either find something or throw an error.
@@ -339,7 +340,7 @@ function find_rational_point(C::ConCrv{QQFieldElem})
   end
 end
 
-function find_rational_point(C::ConCrv{AbsSimpleNumFieldElem})
+function find_rational_point(C::ConCrv{T}) where T<:Union{AbsSimpleNumFieldElem}
   K = base_field(C)
   Q = quadratic_space(K, matrix(C))
   bool, sol = is_isotropic_with_vector(Q)
@@ -361,22 +362,26 @@ function find_rational_point(C::ConCrv{FqFieldElem})
   end
 end
 
+
 function reduce_conic(v)
   a, b, c = v
   
-  w = lcm([a, b, c])
+  
+  ad, bd, cd = map(denominator, [a,b,c])
+  w = lcm([ad, bd, cd])
   a, b, c = map(x -> w*x, [a, b, c])
+  a,b,c = map(numerator, [a,b,c])
   w = gcd(a,b,c)
   a, b, c = map(x -> x/w, [a, b, c])
   lambda = mu = nu =1
   g1 = g2 = g3 =-1
-  while g1*g2*g3 != 1
+  while g1 != 1 || g2 != 1 || g3 != 1
     g1 = gcd(a,b)
     a = a/g1; b = b/g1; c = c*g1; nu = g1*nu
     g2 = gcd(a,c)
     a = a/g2; b = g2*b; c = c/g2; mu = g2*mu
     g3 = gcd(b,c)
-    a = g1*a; b = b/g3; c = c/g3; lambda = g3*lambda
+    a = g3*a; b = b/g3; c = c/g3; lambda = g3*lambda
   end
 
   facs_a = factor_squarefree(a)
@@ -384,7 +389,7 @@ function reduce_conic(v)
   facs_c = factor_squarefree(c)
   Kt = parent(a)
   #Compute a1, a2
-  a1 = one(Kt)
+  a1 = facs_a.unit
   a2 = one(Kt)
   for (p,e) in facs_a
     f = mod(e,2)
@@ -395,7 +400,7 @@ function reduce_conic(v)
   nu = a2* nu 
 
   #Compute b1, b2
-  b1 = one(Kt)
+  b1 = facs_b.unit
   b2 = one(Kt)
   for (p,e) in facs_b
     f = mod(e,2)
@@ -406,7 +411,7 @@ function reduce_conic(v)
   nu = b2* nu 
 
   #Compute c1, c2
-  c1 = one(Kt)
+  c1 = facs_c.unit
   c2 = one(Kt)
   for (p,e) in facs_c
     f = mod(e,2)
@@ -420,14 +425,14 @@ function reduce_conic(v)
 
 end
 
-function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
+function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem{S,T}}) where {S,T}
   Kt_FF = base_field(conic)
+  K = base_ring(Kt_FF)
   t_FF = gen(Kt_FF)
-  M = matrix(conic)
-  M,  U = Hecke._gram_schmidt(M, identity)
+  M1 = matrix(conic)
+  M,  U = Hecke._gram_schmidt(M1, identity)
   
   a, b, c = diagonal(M)
-  a,b,c = map(numerator, [a,b,c])
   Kt = parent(a)
   t = gen(Kt)
   if iszero(a) 
@@ -453,9 +458,9 @@ function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
   #Determine case 
   case = 1
   if mod(da, 2) == mod(db, 2) == mod(dc, 2) == 0
-    S = union(supp_a, supp_b, supp_c)
+    Supp = union(supp_a, supp_b, supp_c)
     case = 0
-    for s in S
+    for s in Supp
       if degree(s) == 1
         case = 1
         delete!(supp_a, s)
@@ -468,14 +473,15 @@ function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
 
   if case == 0
     la, lb, lc = map(leading_coefficient, [a,b,c])
-    sol_cert_0 = find_rational_point(conic(K, [la,lb,lc]))[(1:3)]
+    P = find_rational_point(conic_curve(K, [la,lb,lc]))
+    sol_cert_0 = [P[1], P[2], P[3]]
   end
   Kt = parent(a)
 
   sol_cert = [[],[],[]]
 
   for p in supp_a
-    Lp = residue_field(Kt, p)[1]
+    Lp, phi = residue_field(Kt, p)
     Lpu, u = polynomial_ring(Lp, "u")
     fa = Lp(b) * u^2 + Lp(c)
     sols = roots(fa)
@@ -487,7 +493,7 @@ function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
   end
 
   for p in supp_b
-    Lp = residue_field(Kt, p)[1]
+    Lp, phi = residue_field(Kt, p)
     Lpu, u = polynomial_ring(Lp, "u")
     fb = Lp(c) * u^2 + Lp(a)
     sols = roots(fb)
@@ -499,7 +505,7 @@ function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
   end
 
     for p in supp_c
-      Lp = residue_field(Kt, p)[1]
+      Lp, phi = residue_field(Kt, p)
       Lpu, u = polynomial_ring(Lp, "u")
       fc = Lp(a) * u^2 + Lp(b)
       sols = roots(fc)
@@ -529,53 +535,52 @@ function find_rational_point(conic::ConCrv{Generic.RationalFunctionFieldElem})
   FXYZt, tt = polynomial_ring(FXYZ, "t")
 
 
-
   X_ = sum(X[i]*tt^(i-1) for i in (1:A);init = zero(FXYZt))
   Y_ = sum(Y[i]*tt^(i-1) for i in (1:B);init = zero(FXYZt))
   Z_ = sum(Z[i]*tt^(i-1) for i in (1:C);init = zero(FXYZt))
 
   if case == 0 
     W = XYZ[end]
-    E = [X_[1] - sol_cert_0[1]*W, Y_[1] - sol_cert_0[2]*W, Z_[1] - sol_cert_0[3]*W]
+    E = [X[end] - sol_cert_0[1]*W, Y[end] - sol_cert_0[2]*W, Z[end] - sol_cert_0[3]*W]
   else
     E = []
   end
   
   
   for (p, alpha) in sol_cert[1]
-    r = divrem(Y_ - evaluate(alpha,t) * Z_, evaluate(p,tt))[2]
-    for coeff in coefficients(r)
-      push!(E, coeff)
+    r = divrem(Y_ - evaluate(alpha,tt) * Z_, evaluate(p,tt))[2]
+    for i in (0:degree(p)-1)
+      push!(E, coeff(r, i))
     end
   end
 
   for (p, alpha) in sol_cert[2]
-    r = divrem(X_ - evaluate(alpha,t) * Z_, evaluate(p,tt))[2]
-    for coeff in coefficients(r)
-      push!(E, coeff)
+    r = divrem(Z_ - evaluate(alpha,tt) * X_, evaluate(p,tt))[2]
+    for i in (0:degree(p)-1)
+      push!(E, coeff(r, i))
     end
   end
 
   for (p, alpha) in sol_cert[3]
-    r = divrem(X_ - evaluate(alpha,t) * Y_, evaluate(p,tt))[2]
-    for coeff in coefficients(r)
-      push!(E, coeff)
+    r = divrem(X_ - evaluate(alpha,tt) * Y_, evaluate(p,tt))[2]
+    for i in (0:degree(p)-1)
+      push!(E, coeff(r, i))
     end
   end
   
   M = zero_matrix(K, length(gens(FXYZ)), length(E))
   for i in (1:length(E))
     for j in (1:length(gens(FXYZ)))
-      M[j, i] = coeff(E[i],j)
+      M[j, i] = coeff(E[i],gens(FXYZ)[j])
     end
   end
 
   sol = kernel(M)[1, :]
   X_ = sum(sol[i]*t^(i-1) for i in (1:A);init = zero(Kt))
-  Y_ = sum(sol[i]*t^(i-1) for i in (1+A:A+B);init = zero(Kt))
-  Z_ = sum(sol[i]*t^(i-1) for i in (1+A+B:A+B+C);init = zero(Kt))
-
-  return conic(X_, Y_, Z_)
+  Y_ = sum(sol[A+i]*t^(i-1) for i in (1:B);init = zero(Kt))
+  Z_ = sum(sol[A+B+i]*t^(i-1) for i in (1:C);init = zero(Kt))
+  
+  return conic([lambda*X_, mu*Y_, nu*Z_]*U)
 end
 
 
