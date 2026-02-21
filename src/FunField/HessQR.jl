@@ -121,8 +121,8 @@ function Hecke.integral_split(a::Generic.RationalFunctionFieldElem{QQFieldElem},
   d = denominator(a)
   dn = reduce(lcm, map(denominator, coefficients(n)), init = ZZRingElem(1))
   dd = reduce(lcm, map(denominator, coefficients(d)), init = ZZRingElem(1))
-  zn = S.R(n*dn)
-  zd = S.R(d*dd)
+  zn = change_base_ring(base_ring(S.R), n*dn; parent = S.R)
+  zd = change_base_ring(base_ring(S.R), d*dd; parent = S.R)
   cn = content(zn)
   cd = content(zd)
   zn = divexact(zn, cn)
@@ -157,7 +157,11 @@ Base.parent(a::HessQRElem) = a.parent
 (R::HessQR)(a::HessQRElem) = a
 (R::HessQR)() = R(0)
 
-(F::Generic.RationalFunctionField)(a::HessQRElem) = a.c*F(a.f)//F(a.g)
+function (F::Generic.RationalFunctionField)(a::HessQRElem)
+  K = AbstractAlgebra.Generic.underlying_fraction_field(F)
+  R = base_ring(K)
+  a.c*F(change_base_ring(base_ring(R), a.f; parent = R))//F(change_base_ring(base_ring(R), a.g; parent = R))
+end
 
 
 Nemo.iszero(a::HessQRElem) = iszero(a.c)
@@ -385,7 +389,7 @@ end
 function Hecke.factor(a::HessQRElem)
   f = factor(a.c)
   R = parent(a)
-  return Fac(R(a.f), Dict((R(p),k) for (p,k) = f.fac))
+  return Fac(R(a.f), Dict((R(p),k) for (p,k) in f))
 end
 
 function Hecke.factor(R::HessQR, a::Generic.RationalFunctionFieldElem)
@@ -394,15 +398,15 @@ function Hecke.factor(R::HessQR, a::Generic.RationalFunctionFieldElem)
   d2 = reduce(lcm, map(denominator, coefficients(denominator(a))), init = ZZRingElem(1))
   f2 = factor(R(d1*denominator(a)))
 
-  for (p,k) = f2.fac
-    if haskey(f1.fac, p)
-      f1.fac[p] -= k
+  dic = Dict(p => k for (p, k) in f1)
+  for (p, k) in f2
+    if haskey(dic, p)
+      dic[p] -= k
     else
-      f1.fac[p] = k
+      dic[p] = k
     end
   end
-  f1.unit = divexact(f1.unit, f2.unit)
-  return f1
+  return Fac(divexact(unit(f1), unit(f2)), dic)
 end
 
 function Hecke.is_constant(a::HessQRElem)

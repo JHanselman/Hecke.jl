@@ -41,10 +41,9 @@ julia> O = maximal_order(K);
 function maximal_order(K::AbsSimpleNumField; discriminant::ZZRingElem = ZZRingElem(-1), ramified_primes::Vector{ZZRingElem} = ZZRingElem[])
   return get_attribute!(K, :maximal_order) do
     E = any_order(K)
-    O = new_maximal_order(E, ramified_primes = ramified_primes)
+    O = new_maximal_order(E, disc = discriminant, ramified_primes = ramified_primes)
     O.is_maximal = 1
     if E === O
-      E.is_maximal == 1
       if isdefined(E, :lllO)
         E.lllO.is_maximal = 1
       end
@@ -105,8 +104,8 @@ function pmaximal_overorder_at(O::AbsSimpleNumFieldOrder, primes::Vector{ZZRingE
   K = nf(O)
   EO = equation_order(K)
   M = zero_matrix(ZZ, 2 * degree(O), degree(O))
-  Zx = polynomial_ring(ZZ, "x", cached = false)[1]
-  f = Zx(K.pol)
+  Zx = Globals.Zx
+  f = numerator(defining_polynomial(K), Zx)
   for i in 1:length(primes1)
     p = primes1[i]
     @vprintln :AbsNumFieldOrder 1 "Computing p-maximal overorder for $p ..."
@@ -152,8 +151,8 @@ function new_maximal_order(O::AbsSimpleNumFieldOrder; index_divisors::Vector{ZZR
   end
 
   if is_defining_polynomial_nice(K) && (is_equation_order(O) || contains_equation_order(O))
-    Zx, x = polynomial_ring(ZZ, "x", cached = false)
-    f1 = Zx(K.pol)
+    Zx = Globals.Zx
+    f1 = numerator(defining_polynomial(K), Zx)
     ds = gcd(reduced_resultant(f1, derivative(f1)), discriminant(O))
     l = prefactorization(f1, ds)
   else
@@ -242,8 +241,7 @@ function new_maximal_order(O::AbsSimpleNumFieldOrder; index_divisors::Vector{ZZR
   if !isempty(Q) && discriminant(O1) != disc
     @vprintln :AbsNumFieldOrder 1 "I have to factor $Q\n "
     for el in Q
-      d = factor(el).fac
-      O2 = pmaximal_overorder_at(O, collect(keys(d)))
+      O2 = pmaximal_overorder_at(O, prime_divisors(el))
       O1 = sum_as_Z_modules(O1, O2, auxmat)
     end
   end
@@ -307,7 +305,7 @@ function _radical_by_poly(O::AbsSimpleNumFieldOrder, q::ZZRingElem)
   K = nf(O)
   R = residue_ring(ZZ, q, cached=false)[1]
   Rx = polynomial_ring(R, "x", cached = false)[1]
-  f = Rx(K.pol)
+  f = change_base_ring(R, K.pol; parent=Rx)
   f1 = derivative(f)
   fd, p1 = _gcd_with_failure(f, f1)
   if !isone(fd)
@@ -724,13 +722,13 @@ function new_pradical_frobenius1(O::AbsSimpleNumFieldOrder, p::Int)
   d = degree(O)
   K = nf(O)
   Rx = polynomial_ring(R, "x", cached = false)[1]
-  res = factor_shape_refined(Rx(K.pol))
+  res = factor_shape_refined(change_base_ring(R, defining_polynomial(K); parent = Rx))
   md = 1
   for i = 1:length(res)
     md = max(md, res[i][2])
   end
   j = clog(ZZRingElem(md), p)
-  sqf = factor_squarefree(Rx(K.pol))
+  sqf = factor_squarefree(change_base_ring(R, defining_polynomial(K); parent = Rx))
   p1 = one(Rx)
   for (x, v) in sqf
     if v > 1
@@ -800,7 +798,7 @@ function new_pradical_frobenius1(O::AbsSimpleNumFieldOrder, p::Int)
     #First, find the generators
     new_gens = Vector{AbsSimpleNumFieldOrderElem}()
     for i = 1:ncols(X)
-      coords = zeros(ZZ, d)
+      coords = zeros_array(ZZ, d)
       for j=1:nr
         coords[indices[j]] = lift(X[j, i])
       end
@@ -840,13 +838,14 @@ function pradical_frobenius1(O::AbsSimpleNumFieldOrder, p::Int)
   d = degree(O)
   K = nf(O)
   Rx = polynomial_ring(R, "x", cached = false)[1]
-  res = factor_shape_refined(Rx(K.pol))
+  fmodp = change_base_ring(R, defining_polynomial(K); parent = Rx)
+  res = factor_shape_refined(fmodp)
   md = 1
   for i = 1:length(res)
     md = max(md, res[i][2])
   end
   j = clog(ZZRingElem(md), p)
-  sqf = factor_squarefree(Rx(K.pol))
+  sqf = factor_squarefree(fmodp)
   p1 = one(Rx)
   for (x, v) in sqf
     if v > 1
@@ -895,7 +894,7 @@ function pradical_frobenius1(O::AbsSimpleNumFieldOrder, p::Int)
   end
   #First, find the generators
   for i = 1:ncols(X)
-    coords = zeros(ZZ, d)
+    coords = zeros_array(ZZ, d)
     for j=1:nr
       coords[indices[j]] = lift(X[j, i])
     end
@@ -933,7 +932,7 @@ function pradical_trace1(O::AbsSimpleNumFieldOrder, p::IntegerUnion)
   K = nf(O)
   F = Native.GF(p, cached = false)
   Fx = polynomial_ring(F, "x", cached = false)[1]
-  sqf = factor_squarefree(Fx(K.pol))
+  sqf = factor_squarefree(change_base_ring(F, defining_polynomial(K); parent = Fx))
   p1 = one(Fx)
   for (x, v) in sqf
     if v > 1
@@ -1024,8 +1023,8 @@ function prefactorization(f::ZZPolyRingElem, d::ZZRingElem, f1::ZZPolyRingElem =
 
     R = residue_ring(ZZ, d1, cached = false)[1]
     Rx = polynomial_ring(R, "x", cached = false)[1]
-    ff = Rx(f)
-    ff1 = Rx(f1)
+    ff = change_base_ring(R, f; parent = Rx)
+    ff1 = change_base_ring(R, f1; parent = Rx)
     fd = _gcd_with_failure(ff, ff1)[1]
     fdl = gcd(fd, d1)
     if !isone(fd) && d1 != fdl

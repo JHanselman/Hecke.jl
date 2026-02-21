@@ -107,41 +107,22 @@ function has_point(w, V::VectorList)
   end
 end
 
-function _find_point(w::ZZMatrix, V::VectorList{ZZMatrix, T}) where T
-  positive = false
-  for k in 1:length(w)
-    if !iszero(w[1, k])
-      positive = w[1, k] > 0
-      break
-    end
-  end
-  if positive
-    if issorted(V)
-      k = searchsortedfirst(V.vectors, w)
-    else
-      k = findfirst(isequal(w), V.vectors)
-    end
-    @assert k !== nothing
-    return k
-  else
-    mw = -w
-    if issorted(V)
-      k = searchsortedfirst(V.vectos, mw)
-    else
-      k = findfirst(isequal(mw), V.vectors)
-    end
-    @assert k !== nothing
-    return -k
-  end
-end
-
 function Base.show(io::IO, C::ZLatAutoCtx)
   print(io, "Automorphism context for ", C.G)
 end
 
 dim(C::ZLatAutoCtx) = C.dim
 
-function init(C::ZLatAutoCtx, auto::Bool = true, bound::ZZRingElem = ZZRingElem(-1), use_dict::Bool = true; depth::Int = -1, bacher_depth::Int = 0)
+function init(
+  C::ZLatAutoCtx,
+  auto::Bool = true,
+  bound::ZZRingElem = ZZRingElem(-1),
+  use_dict::Bool = true;
+  depth::Int=-1,
+  bacher_depth::Int=0,
+  is_lll_reduced_known::Bool=false,
+  known_short_vectors=(0, []),
+)
   # Compute the necessary short vectors
 
   r = length(C.G)
@@ -155,9 +136,16 @@ function init(C::ZLatAutoCtx, auto::Bool = true, bound::ZZRingElem = ZZRingElem(
 
   @assert bound > 0
 
-  @vprintln :Lattice 1 "Computing short vectors of length $bound"
+  @vprintln :Lattice 1 "Computing short vectors of length <= $bound"
+  # If one already knows all the short vectors of length at most equal to alpha
+  alpha, V = known_short_vectors
 
-  @vtime :Lattice 1 V = _short_vectors_gram_integral(Vector, C.G[1], bound)
+  # If _V is not empty, then it should contain (up to sign) all the short vectors
+  # of length at most equal to alpha. So if alpha is lower than bound, we add the
+  # missing vectors
+  if alpha < bound
+    @vtime :Lattice 1 append!(V, _short_vectors_gram_integral(Vector, C.G[1], alpha+1, bound; is_lll_reduced_known))
+  end
 
   vectors = Vector{ZZMatrix}(undef, length(V))
 
@@ -287,7 +275,16 @@ end
 
 # The following functions tries to initialize a ZLatAutoCtx with entries in Int.
 # The return value is flag, Csmall
-function try_init_small(C::ZLatAutoCtx, auto::Bool = true, bound::ZZRingElem = ZZRingElem(-1), use_dict::Bool = true; depth::Int = -1, bacher_depth::Int = 0)
+function try_init_small(
+  C::ZLatAutoCtx,
+  auto::Bool = true,
+  bound::ZZRingElem = ZZRingElem(-1),
+  use_dict::Bool = true;
+  depth::Int=-1,
+  bacher_depth::Int=0,
+  is_lll_reduced_known::Bool=false,
+  known_short_vectors=(0, []),
+ )
   automorphism_mode = bound == ZZRingElem(-1)
 
   Csmall = ZLatAutoCtx{Int, Matrix{Int}, Vector{Int}}()
@@ -305,9 +302,17 @@ function try_init_small(C::ZLatAutoCtx, auto::Bool = true, bound::ZZRingElem = Z
   @assert bound > 0
 
   # Compute the necessary short vectors
-  @vprintln :Lattice 1 "Computing short vectors of length $bound"
-  @vtime :Lattice 1 V = _short_vectors_gram_integral(Vector, C.G[1], bound, Int)
+  @vprintln :Lattice 1 "Computing short vectors of length <= $bound"
+  # If one already knows all the short vectors of length at most equal to alpha
+  alpha, V = known_short_vectors
+  @assert all(Base.Fix2(isa, Vector{Int})∘first, V)
 
+  # If _V is not empty, then it should contain (up to sign) all the short vectors
+  # of length at most equal to alpha. So if alpha is lower than bound, we add the
+  # missing vectors
+  if alpha <= bound
+    @vtime :Lattice 1 append!(V, _short_vectors_gram_integral(Vector, C.G[1], alpha+1, bound, Int; is_lll_reduced_known))
+  end
   vectors = Vector{Vector{Int}}(undef, length(V))
 
   lengths = Vector{Vector{Int}}(undef, length(V))
@@ -375,7 +380,6 @@ function try_init_small(C::ZLatAutoCtx, auto::Bool = true, bound::ZZRingElem = Z
   end
 
   V = VectorList(vectors, lengths, use_dict)
-
 
   Csmall.V = V
 
@@ -1107,63 +1111,6 @@ function _operate(point, A, V, tmp)
   return k
 end
 
-function _find_point(w::Vector{Int}, V)
-  positive = false
-  for k in 1:length(w)
-    if !iszero(w[k])
-      positive = w[k] > 0
-      break
-    end
-  end
-  if positive
-    if sorted
-      k = searchsortedfirst(V, w)
-    else
-      k = findfirst(isequal(w), V)
-    end
-    @assert k !== nothing
-    return k
-  else
-    w .*= -1 # w = -w
-    if sorted
-      k = searchsortedfirst(V, w)
-    else
-      k = findfirst(isequal(w), V)
-    end
-    @assert k !== nothing
-    w .*= -1 # w = -w
-    return -k
-  end
-end
-
-function _find_point(w::ZZMatrix, V)
-  positive = false
-  for k in 1:length(w)
-    if !iszero(w[1, k])
-      positive = w[1, k] > 0
-      break
-    end
-  end
-  if positive
-    if sorted
-      k = searchsortedfirst(V, w)
-    else
-      k = findfirst(isequal(w), V)
-    end
-    @assert k !== nothing
-    return k
-  else
-    mw = -w
-    if sorted
-      k = searchsortedfirst(V, mw)
-    else
-      k = findfirst(isequal(mw), V)
-    end
-    @assert k !== nothing
-    return -k
-  end
-end
-
 function _orbitlen_naive(point::Int, orblen::Int, G::Vector{ZZMatrix}, V)
   working_list = Int[point]
   orbit = Int[point]
@@ -1190,6 +1137,8 @@ function auto(C::ZLatAutoCtx{S, T, U}) where {S, T, U}
   # overflow. This is used in `cand`: Only if `cand` returns true for the
   # Int-version, we run the computation for the ZZRingElem-version for
   # verification.
+  @vprintln :Lattice 2 "Computing automorphisms of $(C.G[1])"
+
   D = _make_small(C)
   dim = Hecke.dim(C)
 
@@ -1863,7 +1812,11 @@ function matgen(x, dim, per, v)
 #/*****	generates the matrix X which has as row
 #					per[i] the vector nr. x[i] from the
 #					list v	*****
-  X = zero_matrix(base_ring(v[1]), dim, dim)
+  if base_ring(v[1]) === Int
+    X = zeros(Int, dim, dim)
+  else
+    X = zero_matrix(base_ring(v[1]), dim, dim)
+  end
   #@show x
   for i in 1:dim
     xi = x[i]
@@ -1913,6 +1866,11 @@ function isometry(Ci::ZLatAutoCtx{SS, T, U}, Co::ZLatAutoCtx{SS, T, U}) where {S
   # overflow. This is used in `cand`: Only if `cand` returns true for the
   # Int-version, we run the computation for the ZZRingElem-version for
   # verification.
+  @vprintln :Lattice 2 "Computing isometry between"
+  @vprintln :Lattice 2 Ci.G[1]
+  @vprintln :Lattice 2 "and"
+  @vprintln :Lattice 2 Co.G[1]
+
   Di = _make_small(Ci)
   Do = _make_small(Co)
   d = dim(Co)
@@ -2332,16 +2290,16 @@ end
 #
 ##########################################
 
-function _isless(x::ZZMatrix, y::ZZMatrix)
+function _isless(x::T, y::T) where T<:Union{ZZMatrix,QQMatrix}
   i = 0
-  c = ncols(x)
-  while i < c
+  n = ncols(x)
+  while i < n
     i += 1
-    if x[i] == y[i]
-      continue
-    else
-      return x[i] < y[i]
-    end
+    xi = mat_entry_ptr(x, 1, i)
+    yi = mat_entry_ptr(y, 1, i)
+    c = cmp(xi,yi)
+    c == 0 && continue
+    return c<0
   end
   return false
 end

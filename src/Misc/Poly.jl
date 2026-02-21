@@ -245,7 +245,8 @@ end
 """
 function hensel_lift(f::ZZPolyRingElem, g::ZZPolyRingElem, h::ZZPolyRingElem, p::ZZRingElem, k::Int)
   Rx, x = polynomial_ring(Native.GF(p, cached=false), cached=false)
-  fl, a, b = gcdx(Rx(g), Rx(h))
+  fl, a, b = gcdx(change_base_ring(base_ring(Rx), g; parent = Rx),
+                  change_base_ring(base_ring(Rx), h; parent = Rx))
   @assert isone(fl)
   @assert k>= 2
   ## if one of the cofactors is zero, this crashes.
@@ -311,7 +312,8 @@ function hensel_lift(f::ZZPolyRingElem, g::ZZPolyRingElem, p::ZZRingElem, k::Int
     mod_sym!(f, pk)
   end
   @assert is_monic(f)
-  q, r = divrem(Rx(f), Rx(g))
+  q, r = divrem(change_base_ring(base_ring(Rx), f; parent = Rx),
+                change_base_ring(base_ring(Rx), g; parent = Rx))
   @assert iszero(r)
   h = lift(parent(f), q)
   return hensel_lift(f, g, h, p, k)[1]
@@ -345,8 +347,8 @@ end
 function rres_bez(f::ZZPolyRingElem, g::ZZPolyRingElem)
   Nemo.check_parent(f, g)
   Qx = polynomial_ring(QQ, "x", cached = false)[1]
-  f1 = Qx(f)
-  g1 = Qx(g)
+  f1 = QQPolyRingElem(Qx, f)
+  g1 = QQPolyRingElem(Qx, g)
   d, q, w = gcdx(f1, g1)
   if iszero(q) || iszero(w)
     if is_constant(f) || is_constant(g)
@@ -416,7 +418,7 @@ Return the number of positive roots of $f$. If `multiplicities` is true,
 than the roots are counted with multiplicities.
 """
 function n_positive_roots(f::ZZPolyRingElem; multiplicities::Bool = false)
-  ff = Globals.Qx(f)
+  ff = change_base_ring(QQ, f; parent = Globals.Qx)
   if !multiplicities
     ffp = derivative(ff)
     g = gcd(ff, ffp)
@@ -437,7 +439,7 @@ end
 function n_positive_roots(f::QQPolyRingElem; multiplicities::Bool = false)
   d = denominator(f)
   @assert d > 0
-  g = Hecke.Globals.Zx(d * f)
+  g = numerator(d * f, Globals.Zx)
   return n_positive_roots(g; multiplicities)
 end
 
@@ -464,7 +466,7 @@ end
 # Number of real roots
 #
 function n_real_roots(f::ZZPolyRingElem)
-  ff = Hecke.Globals.Qx(f)
+  ff = change_base_ring(QQ, f; parent = Globals.Qx)
   ffp = derivative(ff)
   g = gcd(ff, ffp)
   if is_constant(g)
@@ -475,9 +477,7 @@ function n_real_roots(f::ZZPolyRingElem)
 end
 
 function n_real_roots(f::QQPolyRingElem)
-  d = denominator(f)
-  @assert d > 0
-  g = Hecke.Globals.Zx(d * f)
+  g = numerator(f, Globals.Zx)
   return n_real_roots(g)
 end
 
@@ -718,14 +718,23 @@ function roots(f::ZZPolyRingElem; max_roots::Int=degree(f))
 end
 
 function roots(f::QQPolyRingElem; max_roots::Int=degree(f))
-  Zx, x = polynomial_ring(ZZ, cached = false)
-  g = Zx(denominator(f)*f)
+  g = numerator(f, Globals.Zx)
   return roots(QQ, g)
 end
 
 function roots(R::AcbField, f::Union{ZZPolyRingElem, QQPolyRingElem}, abs_tol::Int=R.prec, initial_prec::Int...)
   lf = factor(f)
-  return map(R, reduce(vcat, [_roots(g, abs_tol, initial_prec...) for g = keys(lf.fac) if degree(g) > 0]))
+  return map(R, reduce(vcat, [_roots(g, abs_tol, initial_prec...) for (g, _) in lf if degree(g) > 0]))
+end
+
+function roots(R::ComplexField, f::Union{ZZPolyRingElem, QQPolyRingElem}, abs_tol::Int=precision(Balls), initial_prec::Int...)
+  lf = factor(f)
+  return map(reduce(vcat, [_roots(g, abs_tol, initial_prec...) for (g, _) in lf if degree(g) > 0])) do x
+    # _roots returns AcbFieldElem with the correct ball radius
+    z = ComplexFieldElem()
+    ccall((:acb_set, libflint), Nothing, (Ref{ComplexFieldElem}, Ref{AcbFieldElem}), z, x)
+    return z
+  end
 end
 
 function roots(x::RealPolyRingElem)
@@ -747,7 +756,7 @@ function factor(R::AcbField, f::Union{ZZPolyRingElem, QQPolyRingElem}, abs_tol::
   g = factor(f)
   d = Dict{AcbPolyRingElem, Int}()
   Rt, t = polynomial_ring(R, var(parent(f)), cached = false)
-  for (k,v) = g.fac
+  for (k, v) in g
     for r = roots(R, k)
       d[t-r] = v
     end
@@ -759,7 +768,7 @@ function factor(R::ComplexField, f::Union{ZZPolyRingElem, QQPolyRingElem}, abs_t
   g = factor(f)
   Rt, t = polynomial_ring(R, var(parent(f)), cached = false)
   d = Dict{typeof(t), Int}()
-  for (k,v) = g.fac
+  for (k, v) in g
     for r = roots(R, k)
       d[t-r] = v
     end
@@ -771,10 +780,21 @@ function roots(R::ArbField, f::Union{ZZPolyRingElem, QQPolyRingElem}, abs_tol::I
   g = factor(f)
   r = elem_type(R)[]
   C = AcbField(precision(R))
-  for k = keys(g.fac)
+  for (k, _) in g
     s, _ = signature(k)
     rt = roots(C, k)
     append!(r, map(real, rt[1:s]))
+  end
+  return r
+end
+
+function roots(R::RealField, f::Union{ZZPolyRingElem, QQPolyRingElem}, abs_tol::Int=precision(Balls), initial_prec::Int...)
+  g = factor(f)
+  r = elem_type(R)[]
+  C = complex_field()
+  for (k, _) in g
+    rt = roots(C, k)
+    append!(r, map(real, filter!(is_real, rt)))
   end
   return r
 end
@@ -789,7 +809,7 @@ function factor(R::Union{RealField, ArbField}, f::Union{ZZPolyRingElem, QQPolyRi
     C = AcbField(precision(R))
   end
 
-  for (k,v) = g.fac
+  for (k, v) in g
     s, t = signature(k)
     r = roots(C, k)
     for i=1:s

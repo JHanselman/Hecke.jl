@@ -271,6 +271,22 @@ end
 #
 ################################################################################
 
+@doc raw"""
+    embedded_number_field(f::QQPolyRingElem, r)
+                                  -> Tuple{EmbeddedAbsSimpleNumField, FieldElem}
+
+Create the real algebraic extension $K = \mathbf{QQ}(a)$, where $a$ is the root
+of $f$ closest to $r$. The function returns the field $K$ and $a$.
+
+```jldoctest
+julia> Qx, x = QQ[:x];
+
+julia> K, a = embedded_number_field(x^2 - 2, 1.0);
+
+julia> a^2 == 2 && a > 0
+true
+```
+"""
 function embedded_number_field(f::Union{QQPolyRingElem, ZZPolyRingElem}, r::Union{AbstractFloat, Tuple}, var = "a")
   K, a = number_field(f, var)
   r = real_embedding(K, r)
@@ -334,6 +350,34 @@ end
 
 function is_rational(x::EmbeddedNumFieldElem)
   return is_rational(data(x))
+end
+
+function (Qb::QQBarField)(x::EmbeddedNumFieldElem)
+  f = absolute_minpoly(data(x))
+  r = roots(Qb, f)
+  e = embedding(parent(x))
+  prec = 2
+  while true
+    CC = AcbField(prec)
+    found = false
+    j = 0
+    for i in 1:length(r)
+      if overlaps(CC(r[i]), e(data(x), prec))
+        if !found
+          found = true
+          j = i
+        else
+          # found already
+          j = 0
+          break
+        end
+      end
+    end
+    if j != 0
+      return r[j]
+    end
+    prec *= 2
+  end
 end
 
 ################################################################################

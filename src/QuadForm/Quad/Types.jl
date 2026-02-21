@@ -42,6 +42,7 @@ Reference: [CS99](@cite) Chapter 15, Section 7.
 mutable struct ZZLocalGenus
   _prime::ZZRingElem
   _symbol::Vector{Vector{Int}}
+  canonical_symbol::String
 
   function ZZLocalGenus(prime, symbol, check=true)
     if check
@@ -279,8 +280,8 @@ end
     return new{S, T, U}()
   end
 
-  function QuadLat(K::S, G::T, P::U) where {S, T, U}
-    space = quadratic_space(K, G)
+  function QuadLat(K::S, G::T, P::U; cached=false) where {S, T, U}
+    space = quadratic_space(K, G; cached)
     z = new{S, T, U}(space, P)
     z.base_algebra = K
     return z

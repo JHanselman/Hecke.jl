@@ -149,3 +149,23 @@ let
   P, = prime_ideals_over(maximal_order(K), 10007)
   @test valuation(gen(K), P) == 0
 end
+
+let
+  Qx, x = QQ[:x]
+  f = 8*x^3 + 4*x^2 - 1//3*x-1
+  k, a = number_field(f; cached = false)
+  ok = maximal_order(k)
+  lp = prime_ideals_over(ok, 2)
+  P = lp[1]
+  @test divides(P^2, P)
+end
+
+let
+  Qt, t = QQ[:t]
+  k, = number_field(492800*t^12 - 1766400*t^10 + 2458020*t^8 - 1713167*t^6 + 614505*t^4 - 110400*t^2 + 7700; cached = false)
+  Ok = maximal_order(k)
+  lp = prime_decomposition(Ok, 2)
+  @test length(lp) == 4
+  @test issetequal([norm(x[1]) for x = lp], [2, 2, 4, 4])
+
+end

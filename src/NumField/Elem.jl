@@ -296,7 +296,7 @@ coeff(::SimpleNumFieldElem, ::Int)
 # copy does not do anything (so far), this is only for compatibility with coefficients(::AbstractAssociativeAlgebraElem)
 
 @doc raw"""
-    coefficients(a::SimpleNumFieldElem, i::Int) -> Vector{FieldElem}
+    coefficients(a::SimpleNumFieldElem) -> Vector{FieldElem}
 
 Given a number field element `a` of a simple number field extension `L/K`, this
 function returns the coefficients of `a`, when expanded in the canonical
@@ -447,16 +447,34 @@ coefficientwise.
 """
 function norm(f::PolyRingElem{<: NumFieldElem})
   K = base_ring(f)
-  P = polynomial_to_power_sums(f, degree(f)*degree(K))
-  PQ = elem_type(base_field(K))[tr(x) for x in P]
-  return power_sums_to_polynomial(PQ)
+  n, ff = remove(f, gen(parent(f)))
+  if degree(ff) > 0
+    P = polynomial_to_power_sums(ff, degree(ff)*degree(K))
+    PQ = elem_type(base_field(K))[tr(x) for x in P]
+    N = power_sums_to_polynomial(PQ)
+  else
+    k = base_field(K)
+    kt, = polynomial_ring(k, :t; cached = false)
+    N = kt(norm(constant_coefficient(ff)))
+  end
+  (n > 0) && (N = shift_left(N, n*degree(K)))
+  return N
 end
 
 function norm(f::PolyRingElem{<:NumFieldElem}, k::NumField)
   K = base_ring(f)
-  P = polynomial_to_power_sums(f, degree(f)*degree(K))
-  PQ = elem_type(base_field(K))[tr(x, k) for x in P]
-  return power_sums_to_polynomial(PQ)
+  n, ff = remove(f, gen(parent(f)))
+  if degree(ff) > 0
+    P = polynomial_to_power_sums(ff, degree(ff)*degree(K))
+    PQ = elem_type(base_field(K))[tr(x, k) for x in P]
+    N = power_sums_to_polynomial(PQ)
+  else
+    k = base_field(K)
+    kt, = polynomial_ring(k, :t; cached = false)
+    N = kt(norm(constant_coefficient(ff), k))
+  end
+  (n > 0) && (N = shift_left(N, n*degree(K)))
+  return N
 end
 
 norm(a::QQPolyRingElem) = a
@@ -686,7 +704,7 @@ end
 
 absolute_minpoly(a::AbsSimpleNumFieldElem) = minpoly(a)
 
-absolute_minpoly(a::AbsNonSimpleNumField) = minpoly(a)
+absolute_minpoly(a::AbsNonSimpleNumFieldElem) = minpoly(a)
 
 absolute_minpoly(a::T) where T <: Union{RelNonSimpleNumFieldElem, RelSimpleNumFieldElem} = minpoly(a, QQ)
 

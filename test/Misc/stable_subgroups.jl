@@ -48,7 +48,25 @@
     for y in ls
       @test Hecke.is_submodule(M,Hecke._dualize(y,V,v))
     end
-
+    @test length(ls) == 16
+    @test issetequal(howell_form.(ls), map(x -> matrix(R, 4, 4, x),
+      [[0 0 0 0; 0 0 0 0; 0 0 0 0; 0 0 0 0],
+       [0 0 3 0; 0 0 0 0; 0 0 0 0; 0 0 0 0],
+       [1 0 3 0; 0 1 6 0; 0 0 0 0; 0 0 0 0],
+       [1 0 0 0; 0 1 0 0; 0 0 3 0; 0 0 0 0],
+       [1 2 1 0; 0 0 3 0; 0 0 0 0; 0 0 0 0],
+       [1 2 1 3; 0 0 3 0; 0 0 0 0; 0 0 0 0],
+       [1 2 1 6; 0 0 3 0; 0 0 0 0; 0 0 0 0],
+       [0 0 3 0; 0 0 0 3; 0 0 0 0; 0 0 0 0],
+       [1 0 0 0; 0 1 0 0; 0 0 1 0; 0 0 0 0],
+       [1 0 0 0; 0 1 0 0; 0 0 1 3; 0 0 0 0],
+       [1 0 0 0; 0 1 0 0; 0 0 1 6; 0 0 0 0],
+       [1 0 0 0; 0 1 0 0; 0 0 3 0; 0 0 0 3],
+       [1 2 1 0; 0 0 3 0; 0 0 0 3; 0 0 0 0],
+       [1 0 0 0; 0 1 0 0; 0 0 1 0; 0 0 0 3],
+       [1 2 0 2; 0 0 1 1; 0 0 0 3; 0 0 0 0],
+       [1 0 0 0; 0 1 0 0; 0 0 1 0; 0 0 0 1]]
+     ))
   end
 
 
@@ -107,5 +125,18 @@
 
   end
 
+  let # cornercase
+    A = abelian_group()
+    g = id_hom(A)
+    l = stable_subgroups(A,[g])
+    ll = collect(l)
+    @test length(ll) == 1
+  end
 
+  let # cornercase
+    A = abelian_group([4,4])
+    endo = hom(A,A,[2*i for i in gens(A)])
+    s = stable_subgroups(A,[endo])
+    @test length(s) == 15
+  end
 end

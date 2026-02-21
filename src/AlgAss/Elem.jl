@@ -834,14 +834,11 @@ Returns the minimal polynomial of $a$ as a polynomial over
 `base_ring(algebra(a))`.
 """
 function Generic.minpoly(a::AbstractAssociativeAlgebraElem)
-  M = representation_matrix(a)
-  R = polynomial_ring(base_ring(parent(a)), "x", cached=false)[1]
-  return minpoly(R, a)
+  return minpoly(representation_matrix(a))
 end
 
 function Generic.minpoly(R::PolyRing, a::AbstractAssociativeAlgebraElem)
-  M = representation_matrix(a)
-  return minpoly(R, M)
+  return minpoly(R, representation_matrix(a))
 end
 
 @doc raw"""
@@ -851,9 +848,11 @@ Returns the characteristic polynomial of $a$ as a polynomial over
 `base_ring(algebra(a))`.
 """
 function charpoly(a::AbstractAssociativeAlgebraElem)
-  M = representation_matrix(a)
-  R = polynomial_ring(base_ring(parent(a)), "x", cached = false)[1]
-  return charpoly(R, M)
+  return charpoly(representation_matrix(a))
+end
+
+function charpoly(R::PolyRing, a::AbstractAssociativeAlgebraElem)
+  return charpoly(R, representation_matrix(a))
 end
 
 function _reduced_charpoly_simple(a::AbstractAssociativeAlgebraElem, R::PolyRing)
@@ -998,7 +997,7 @@ end
 
 function _addmul!(M::FqMatrix, i, j, a::FqFieldElem, b::FqFieldElem, temp = base_ring(M)())
   GC.@preserve M begin
-    c = Nemo.fq_default_mat_entry_ptr(M, i, j)
+    c = mat_entry_ptr(M, i, j)
     mul!(temp, a, b)
     ccall((:fq_default_add, libflint), Nothing, (Ptr{FqFieldElem}, Ptr{FqFieldElem}, Ref{FqFieldElem}, Ref{FqField}), c, c, temp, base_ring(M))
   end
@@ -1276,7 +1275,7 @@ function jordan_chevalley_decomposition(x::AbstractAssociativeAlgebraElem)
       m[i + 1, l + 1] = coeff(h, l)
     end
   end
-  v = [zero(QQ) for k in 1:degree(ggpgcd)]
+  v = zeros_array(QQ, degree(ggpgcd))
   if length(v) > 0
     v[1] = 1
   end

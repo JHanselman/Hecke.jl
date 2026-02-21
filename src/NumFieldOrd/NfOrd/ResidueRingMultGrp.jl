@@ -211,7 +211,7 @@ function _primitive_element_mod_p(p::AbsNumFieldOrderIdeal{AbsSimpleNumField, Ab
   O = order(p)
   Q, Q_map = quo(O,p)
   n = norm(p) - 1
-  primefactors_n = collect(keys(factor(n).fac))
+  primefactors_n = prime_divisors(n)
   while true
     x = rand(Q)
     x == 0 && continue
@@ -945,8 +945,7 @@ function _n_part_multgrp_mod_p(p::AbsNumFieldOrderIdeal{AbsSimpleNumField, AbsSi
   @assert !isone(gcd(ZZRingElem(n), np))
   npart, m = ppio(np, ZZRingElem(n))
   k = gcd(npart, ZZRingElem(n))
-  fac = factor(k)
-  powm = ZZRingElem[divexact(npart, x) for x in keys(fac.fac)]
+  powm = ZZRingElem[divexact(npart, x) for x in prime_divisors(k)]
 
   #
   #  We search for a random element with the right order
@@ -1308,7 +1307,7 @@ snf(GtoR::Union{GrpAbFinGenToAbsOrdQuoRingMultMap, GrpAbFinGenToAbsOrdMap}, modu
 # product to O/(IJ).
 # It is assumed that I and J are coprime.
 function direct_product(G::FinGenAbGroup, GtoQ::GrpAbFinGenToAbsOrdQuoRingMultMap, H::FinGenAbGroup, HtoQ::GrpAbFinGenToAbsOrdQuoRingMultMap)
-  return direct_product([G, H], [GtoQ, GtoH])
+  return direct_product([G, H], [GtoQ, HtoQ])
 end
 
 # Let G_i be the groups and Q_i be the codomains of the maps such that
@@ -1465,12 +1464,14 @@ function _direct_product!(ideals_and_maps::Vector{Tuple{AbsNumFieldOrderIdeal{Ab
   generators = Vector{AbsSimpleNumFieldOrderQuoRingElem}()
   if length(ideals) != 1
     moduli = _compute_products_for_make_coprime(ideals)
+  else
+    moduli = nothing
   end
   for i = 1:length(ideals)
     for map in ideals_and_maps[i][2]
       push!(groups, domain(map))
       for j = 1:length(map.generators)
-        if length(ideals) == 1
+        if moduli === nothing
           push!(generators, Q(map.generators[j]))
         else
           g = crt(map.generators[j], ideals[i], oneO, moduli[i])

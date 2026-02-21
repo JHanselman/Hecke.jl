@@ -129,7 +129,7 @@ function JorDec(J, G, E, p)
     for i in 1:t
       _sym[i] = (nrows(J[i]), sL[i], 0)
       push!(dets, det(G[i]))
-      push!(witt, witt_invariant(quadratic_space(K, G[i]), p))
+      push!(witt, witt_invariant(quadratic_space(K, G[i];cached=false), p))
       #GG = diagonal_matrix(eltype(G)[ j < i ? unif^(2*(sL[i] - sL[j])) * G[j] : G[j] for j in 1:t])
       D = diagonal(G[i])
       m, pos = findmin(Union{PosInf, Int}[iszero(d) ? inf : valuation(d, p) for d in D])
@@ -358,7 +358,7 @@ function direct_sum(J1::JorDec{S, T, U}, J2::JorDec{S, T, U}) where {S, T, U}
     return JorDec(J1.p, _sca, _rk, _dets)
   else
     # Lazy
-    return JorDec(direct_sum(lattice(J1), lattice(J2))[1], J1.p)
+    return JorDec(direct_sum(lattice(J1), lattice(J2);cached=false)[1], J1.p)
   end
 end
 
@@ -1082,7 +1082,7 @@ function direct_sum(G1::QuadLocalGenus, G2::QuadLocalGenus)
   else
     L1 = representative(G1)
     L2 = representative(G2)
-    L3, = direct_sum(L1, L2)
+    L3, = direct_sum(L1, L2; cached=false)
     G3 = genus(L3, prime(G1))
   end
 
@@ -1162,7 +1162,7 @@ end
 
 function representative(G::QuadLocalGenus)
   K = nf(order(G.p))
-  return lattice(quadratic_space(K, gram_matrix(jordan_decomposition(G))))
+  return lattice(quadratic_space(K, gram_matrix(jordan_decomposition(G));cached=false))
 end
 
 ######
@@ -1415,7 +1415,7 @@ Given a prime ideal $\mathfrak p$, returns all abstract Jordan decompositions
 of rank `r` with determinant valuation `det_val` and scales of the blocks
 bounded by `max_scale`.
 """
-function local_jordan_decompositions(E, p; rank::Int, det_val::Int, max_scale = nothing)
+function local_jordan_decompositions(E, p; rank::Int, det_val::Int, max_scale = nothing, min_scale::Int=0)
   local _max_scale::Int
 
   if max_scale === nothing
@@ -1424,21 +1424,23 @@ function local_jordan_decompositions(E, p; rank::Int, det_val::Int, max_scale = 
     _max_scale = max_scale
   end
 
+  sc = _max_scale - min_scale + 1
+  # possible scales and ranks
   scales_rks = Vector{Tuple{Int, Int}}[]
-
-  for rkseq in _integer_lists(rank, _max_scale + 1)
-    d = 0
-    pgensymbol = Tuple{Int, Int}[]
-    for i in 0:(_max_scale + 1) - 1
-      d += i * rkseq[i + 1]
-      if rkseq[i + 1] != 0
-        push!(pgensymbol, (i, rkseq[i + 1]))
+  if sc > 0
+    for rkseq in partitions_with_condition(rank, sc, det_val-rank*min_scale)
+      # rank sequences
+      # sum(rkseq) = rank
+      pgensymbol = Tuple{Int,Int}[]
+      for i in 1:sc
+        # blocks of rank 0 are omitted
+        iszero(rkseq[i]) && continue
+        push!(pgensymbol, (i-1+min_scale, rkseq[i]))
       end
-    end
-    if d == det_val
-        push!(scales_rks, pgensymbol)
+      push!(scales_rks, pgensymbol)
     end
   end
+
 
   res = JorDec{typeof(E), typeof(p), elem_type(E)}[]
 
@@ -1847,7 +1849,7 @@ function _possible_determinants(K, local_symbols, signatures)
   return dets
 end
 
-function quadratic_space(G::QuadGenus)
+function quadratic_space(G::QuadGenus; cached=false)
   if isdefined(G, :space)
     return G.space::quadratic_space_type(G.K)
   end
@@ -1858,7 +1860,7 @@ function quadratic_space(G::QuadGenus)
   d = G.d
   signa = G.signatures
   rk = G.rank
-  G.space = quadratic_space(G.K, _quadratic_form_with_invariants(rk, d, P, signa))
+  G.space = quadratic_space(G.K, _quadratic_form_with_invariants(rk, d, P, signa);cached)
   return G.space::quadratic_space_type(G.K)
 end
 
@@ -1872,7 +1874,7 @@ function representative(G::QuadGenus)
   K = G.K
   OK = order(primes(G)[1])
   # Let's follow the Lorch paper. This is also how we do it in the Hermitian case.
-  V = quadratic_space(G)
+  V = quadratic_space(G; cached=false)
   M = maximal_integral_lattice(V)
   for g in G.LGS
     p = prime(g)
@@ -1963,7 +1965,7 @@ function direct_sum(G1::QuadGenus{S, T, U}, G2::QuadGenus{S, T, U}) where {S, T,
   end
   sig1 = G1.signatures
   sig2 = G2.signatures
-  sig3 = merge(+, sig1, sig2)
+  sig3 = mergewith(+, sig1, sig2)
   # We only keep local symbols which are defined at a bad prime or which are not
   # unimodular.
   filter!(g -> (prime(g) in bd) || scales(g) != Int[0], LGS)

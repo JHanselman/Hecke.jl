@@ -47,7 +47,11 @@ export GenOrdFracIdl
 export FinGenAbGroup
 export FinGenAbGroupElem
 export FinGenAbGroupHom
-export FinGenAbGroupToGroupHom
+export FinGenAbGroupToGroupHo
+export FiniteRing
+export FiniteRingElem
+export FiniteRingHom
+export FiniteRingMap
 export MultTableGroup
 export MultTableGroupElem
 export MultTableGroupToGroupHom
@@ -143,6 +147,7 @@ export add_assertion_scope
 export add_right_scaled_row
 export add_scaled_row
 export add_verbosity_scope
+export additive_generators
 export algebra
 export ambient_space
 export angle
@@ -189,11 +194,13 @@ export canonical_injection
 export canonical_injections
 export canonical_projection
 export canonical_projections
+export canonical_symbol
 export carmichael_lambda
 export center
 export central_primitive_idempotents
 export chain_complex
 export class_group
+export class_number
 export classical_modular_polynomial
 export clebsch_from_igusa_clebsch
 export clebsch_from_igusa
@@ -254,6 +261,7 @@ export crt_env
 export crt_inv
 export crt_signed
 export cycle
+export cyclic_algebra
 export cyclotomic_extension
 export cyclotomic_field
 export cyclotomic_field_as_cm_extension
@@ -261,6 +269,9 @@ export cyclotomic_polynomial
 export cyclotomic_regulator
 export cyclotomic_units_totally_real
 export decompose
+export decompose_into_indecomposable_rings
+export decompose_into_p_rings
+export decomposition_field
 export decomposition_group
 export deepcopy
 export defining_modulus
@@ -320,6 +331,7 @@ export embedding
 export embeddings
 export enumerate_definite_genus
 export enumerate_quadratic_triples
+export enumerate_quadratic_triples_iterator
 export equation
 export equation_order
 export euclid
@@ -340,6 +352,7 @@ export find_points
 export find_rational_point
 export finite_divisor
 export finite_maximal_order
+export finite_ring
 export fixed_field
 export fixed_ring
 export flat
@@ -422,7 +435,6 @@ export ideal_type
 export ideals
 export idempotents
 export identity_isogeny
-export identity_map
 export igusa_clebsch_from_clebsch
 export igusa_clebsch_from_igusa
 export igusa_clebsch_invariants
@@ -440,6 +452,7 @@ export induce_rational_reconstruction
 export induces_to_quotient
 export induces_to_subgroup
 export inertia_degree
+export inertia_field
 export inertia_subgroup
 export infinite_divisor
 export infinite_maximal_order
@@ -505,6 +518,7 @@ export is_genus
 export is_gorenstein
 export is_hermitian
 export is_idempotent
+export is_indecomposable
 export is_indefinite
 export is_independent
 export is_index_divisor
@@ -572,6 +586,7 @@ export is_simplified_model
 export is_smooth
 export is_snf
 export is_split
+export is_split_with_map
 export is_split_with_zero_divisor
 export is_squarefree
 export is_subfield
@@ -662,6 +677,7 @@ export maximal_abelian_subfield
 export maximal_even_lattice
 export maximal_integral_lattice
 export maximal_order
+export maximal_p_quotient_ring
 export maximal_submodules
 export meataxe
 export min
@@ -713,6 +729,7 @@ export normic_defect
 export normred
 export norms
 export number_field
+export number_of_additive_generators
 export number_of_lattices
 export number_of_relations
 #export number_of_small_groups #(conflict with Oscar?)
@@ -759,6 +776,7 @@ export prime_ideals_over
 export prime_ideals_up_to
 export primes
 export primitive_closure
+export primitive_extension
 export primitive_root
 export principal_generator
 export principal_subfields
@@ -808,6 +826,7 @@ export real_places
 export reconstruct_from_igusa
 export reduce_binary_form
 export reduce_full
+export reduce_binary_form
 export reduced_charpoly
 export reduced_discriminant
 export reduced_resultant
@@ -836,9 +855,11 @@ export ring_of_integers
 export ring_of_multipliers
 export root
 export root_lattice
+export root_lattices
 export root_lattice_recognition
 export root_lattice_recognition_fundamental
 export root_sublattice
+export root_symbols
 export roots
 export rres
 export rresx
@@ -857,6 +878,7 @@ export set_verbosity_level
 export shift
 export short_vectors
 export short_vectors_affine
+export short_vectors_affine_iterator
 export short_vectors_iterator
 export short_weierstrass_model
 export shortest_vectors

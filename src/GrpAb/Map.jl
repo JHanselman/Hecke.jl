@@ -110,7 +110,9 @@ Return the identity homomorphism of `G`.
 """
 function id_hom(G::FinGenAbGroup)
   I = identity_matrix(ZZ, ngens(G))
-  return FinGenAbGroupHom(G, G, I, I)::FinGenAbGroupHom
+  m = FinGenAbGroupHom(G, G, I, I)
+  set_attribute!(m, :is_identity => true)
+  return m::FinGenAbGroupHom
 end
 
 @doc raw"""
@@ -230,6 +232,7 @@ function hom(
     M::ZZMatrix;
     check::Bool=true,
   )
+  @req nrows(M) == ngens(G) && ncols(M) == ngens(H) "Matrix has wrong dimension"
   if check
     @req check_mat(G, H, M) "Matrix does not define a morphism of abelian groups"
   end
@@ -555,6 +558,36 @@ end
 (p::ZZPolyRingElem)(f::FinGenAbGroupHom) = evaluate(p, f)
 
 (p::QQPolyRingElem)(f::FinGenAbGroupHom) = evaluate(p, f)
+
+function matrix(f::InverseMap{FinGenAbGroup, FinGenAbGroup})
+  if isa(f.origin, FinGenAbGroupHom)
+    if isdefined(f.origin, :imap)
+      return f.origin.imap
+    end
+  end
+  im = try
+    reduce(vcat, [f(d).coeff for d=gens(domain(f))])
+  catch e
+    #can happen if the map was e.g. subgroup inclusion
+    if isa(e, ErrorException) && e.msg == "element is not in the image"
+      return nothing
+    else
+      rethrow(e)
+    end
+  end
+  f.origin.imap = im
+  return im
+end
+
+function matrix(f::Generic.CompositeMap{FinGenAbGroup, FinGenAbGroup})
+  m1 = matrix(f.map1)
+  m2 = matrix(f.map2)
+  if !isa(m1, Nothing) && !isa(m2, Nothing)
+    return m1*m2
+  end
+  return reduce(vcat, [f(d).coeff for d=gens(domain(f))])
+end
+
 
 ###############################################################################
 

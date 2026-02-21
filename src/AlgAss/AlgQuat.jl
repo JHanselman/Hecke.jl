@@ -39,7 +39,7 @@ end
 function QuaternionAlgebra(K::Field, a::T, b::T) where { T <: FieldElem }
   if characteristic(K)!=2
     @assert a != zero(K) && b != zero(K)
-    M = zeros(K, 4, 4, 4)
+    M = zeros_array(K, 4, 4, 4)
 
     M[1, 1, 1] = one(K) # 1*1=1
     M[1, 2, 2] = one(K) # 1*i=i
@@ -70,7 +70,7 @@ function QuaternionAlgebra(K::Field, a::T, b::T) where { T <: FieldElem }
     return z
   else #if characteristic(K)=2
     @assert b != zero(K)
-    M = zeros(K, 4, 4, 4)
+    M = zeros_array(K, 4, 4, 4)
 
     M[1, 1, 1] = one(K) # 1*1=1*1
     M[1, 2, 2] = one(K) # 1*i=1*i
@@ -225,7 +225,7 @@ function standard_involution(A::QuaternionAlgebra{T}) where {T}
 end
 
 @doc raw"""
-    conjugate(a::AssociativeAlgebraElem{_, QuaternionAlgebra})
+    conj(a::AssociativeAlgebraElem{_, QuaternionAlgebra})
                                  -> AssociativeAlgebraElem{_, QuaternionAlgebra}
 
 Return the image of $a$ under the canonical involution of the quaternion
@@ -237,11 +237,11 @@ algebra.
 julia> Q = quaternion_algebra(QQ, -1, -1); a = Q([1, 1, 1, 1])
 1 + i + j + k
 
-julia> conjugate(a)
+julia> conj(a)
 1 - i - j - k
 ```
 """
-function conjugate(a::AssociativeAlgebraElem{T, QuaternionAlgebra{T}}) where {T}
+function conj(a::AssociativeAlgebraElem{T, QuaternionAlgebra{T}}) where {T}
   return standard_involution(parent(a))(a)
 end
 

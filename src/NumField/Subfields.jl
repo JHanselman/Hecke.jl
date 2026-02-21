@@ -134,7 +134,7 @@ function _subfield_primitive_element_from_basis(K::AbsSimpleNumField, as::Vector
   @vprintln :Subfields 1 "Sieving for primitive elements"
   # First check basis elements
   Zx = polynomial_ring(ZZ, "x", cached = false)[1]
-  f = Zx(K.pol*denominator(K.pol))
+  f = change_base_ring(ZZ, K.pol*denominator(K.pol); parent = Zx)
   p, d = _find_prime(ZZPolyRingElem[f])
   #First, we search for elements that are primitive using block systems
   F = Nemo.Native.finite_field(p, d, "w", cached = false)[1]
@@ -252,6 +252,7 @@ function subfield(K::NumField, elt::Vector{<:NumFieldElem}; is_basis::Bool = fal
 end
 
 function _subfield_from_primitive_element(K::AbsSimpleNumField, s::AbsSimpleNumFieldElem)
+  s *= denominator(s)
   @vtime :Subfields 1 f = minpoly(Globals.Qx, s)
   f = denominator(f) * f
   L, _ = number_field(f, cached = false)

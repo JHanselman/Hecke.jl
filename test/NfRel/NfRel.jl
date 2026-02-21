@@ -1,4 +1,35 @@
 @testset "RelSimpleNumField" begin
+  let
+    K, a = Hecke.rationals_as_number_field()
+    Kt, t = K["t"]
+    L, b = number_field(t - 1, "b")
+    Lt, t = L["t"]
+    M, o = number_field(t^3 + 2, "o")
+    @test L(lift(Kt, b)) == b
+    @test_throws ArgumentError lift(Lt, b)
+    @test M(lift(Lt, o^2 + 1)) == o^2 + 1
+    @test_throws ArgumentError lift(Kt, o)
+  end
+
+  @testset "Arithmetic" begin
+    x = QQ["x"][2]
+    K, a = number_field(x^2 + 12x - 92, "a")
+
+    y = K["y"][2]
+    L, b = number_field(y^5 - 5, "b")
+
+    @test b + b == 2*b
+    @test b - b == zero(L)
+    @test (a + b) - b == a
+    @test b * b == b^2
+    @test (b^2) // b == b
+    @test (a*b) // b == a
+    @test b^0 == one(L)
+    @test L(0)^0 == one(L)
+    @test L(0)^1 == zero(L)
+    @test_throws ArgumentError L(0)^(-1)
+  end
+
   @testset "is_subfield" begin
     Qx, x = QQ["x"]
     f = x^2 + 12x - 92
@@ -13,8 +44,6 @@
     @test d == true
     @test parent(LtoM(b)) == M
   end
-
-
 
   @testset "is_isomorphic" begin
     Qx, x = QQ["x"]
@@ -105,7 +134,7 @@
     for p in Hecke.primes_up_to(50)[2:end]
       _,b = @inferred cyclotomic_field_as_cm_extension(p, cached=false)
       chip = absolute_minpoly(b)
-      R = parent(chip) 
+      R = parent(chip)
       x = gen(R)
       @test chip == sum([x^i for i=0:p-1])
     end

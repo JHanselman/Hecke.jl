@@ -122,14 +122,20 @@ function find_points(C::HypellCrv{QQFieldElem}, bound::IntegerUnion, N = 2^14, P
 
 end
 
-
 #Using transform ys is pretty inefficient. In principle one could test the x-coordinates directly on
 #E as the transformation to b only affects the y coordinate. On the other hand.. the set of points will probably be pretty small, so it won't matter that much.
 function transform_ys(P::Tuple{QQFieldElem, QQFieldElem, QQFieldElem}, a1::QQFieldElem, a3::QQFieldElem)
   if P[3]== 0
     return (zero(QQ), one(QQ), zero(QQ))
   end
-  return (P[1], (P[2] - a1*P[1] - a3)//2, 1)
+  return (P[1], (P[2] - a1*P[1] - a3)//2, one(QQ))
+end
+
+function transform_ys(P::Tuple{QQFieldElem, QQFieldElem, QQFieldElem}, h::QQPolyRingElem)
+  if P[3]== 0
+    return (zero(QQ), one(QQ), zero(QQ))
+  end
+  return (P[1], (P[2] - evaluate(h, P[1]))//2, one(QQ))
 end
 
 function transform_ys(P::Tuple{QQFieldElem, QQFieldElem, QQFieldElem}, h::QQPolyRingElem)

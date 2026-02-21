@@ -47,7 +47,7 @@ const QuadSpaceID = AbstractAlgebra.CacheDictType{Any, Any}()
   function QuadSpace(K::S, G::T, cached::Bool) where {S, T}
     return AbstractAlgebra.get_cached!(QuadSpaceID, DictWrapper(G), cached) do
       z = new{S, T}(K, G)
-      z.temp1 = zeros(K, nrows(G))
+      z.temp1 = [zero(K) for _ in 1:nrows(G)]
       z.temp2 = K()
       return z
     end::QuadSpace{S, T}
@@ -401,7 +401,7 @@ true
 Hecke provides several constructors for objects of type `TorQuadModuleMap`, see
 for instance [`hom(::TorQuadModule, ::TorQuadModule, ::ZZMatrix)`](@ref),
 [`hom(::TorQuadModule, ::TorQuadModule, ::Vector{TorQuadModuleElem})`](@ref),
-[`identity_map(::TorQuadModule)`](@ref) or [`trivial_morphism(::TorQuadModule)`](@ref).
+[`id_hom(::TorQuadModule)`](@ref) or [`trivial_morphism(::TorQuadModule)`](@ref).
 """
 mutable struct TorQuadModuleMap <: Map{TorQuadModule, TorQuadModule, HeckeMap, TorQuadModuleMap}
   header::MapHeader{TorQuadModule, TorQuadModule}

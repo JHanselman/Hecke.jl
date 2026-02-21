@@ -17,7 +17,7 @@ function special_prime_ideal(p::ZZRingElem, a::AbsSimpleNumFieldElem)
   Zx = polynomial_ring(ZZ)[1]
   Zpx = polynomial_ring(Native.GF(UInt(p), cached=false), "\$x_p", cached=false)[1]
   g = Zpx(a)
-  ff = Zpx(f)
+  ff = change_base_ring(base_ring(Zpx), f; parent = Zpx)
   gcd!(g, g, ff)
   return lift(Zx, g)
 end
@@ -90,7 +90,9 @@ function class_group_add_relation(clg::ClassGrpCtx{T}, a::AbsSimpleNumFieldElem,
   end
   fl, res = _factor!(clg.FB, a, false, n*nI, integral)
   if fl
+#    @assert abs(norm(a)) == 1 || a*order(clg) == prod(clg.FB.ideals[p]^v for (p,v) = res)
     if res in clg.M.rel_gens || res in clg.M.bas_gens
+      #TODO: thiis throws units away?
       return false
     end
     @vprintln :ClassGroup 3 "adding $res"

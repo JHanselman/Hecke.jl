@@ -149,10 +149,7 @@
     @test rand(rng, I) isa E
     @test rand(rng, Hecke.RandomExtensions.make(I), 2, 3) isa Matrix{E}
 
-    Random.seed!(rng, rand_seed)
-    a = rand(rng, I)
-    Random.seed!(rng, rand_seed)
-    @test a == rand(rng, I)
+    @test reproducible(I)
   end
 
   let
@@ -180,6 +177,35 @@
         @test_throws ArgumentError Hecke.maximal_ideal(A; side = :bla)
         @test_throws ArgumentError Hecke.maximal_ideals(A; side = :bla)
       end
+    end
+  end
+
+  # prime ideals
+  let
+    M = matrix_algebra(GF(2), 2)
+    lP = Hecke.prime_ideals(M)
+    @test length(lP) == 1 && is_zero(lP[1])
+    B, = StructureConstantAlgebra(matrix_algebra(GF(2), 2))
+    lP = Hecke.prime_ideals(B)
+    @test length(lP) == 1 && is_zero(lP[1])
+    C, = direct_product(B, B, B)
+    lP = Hecke.prime_ideals(C)
+    @test allunique(lP)
+    for P in lP
+      CC, = quo(C, P)
+      @test is_simple(CC)
+    end
+
+    A = group_algebra(GF(2), small_group(8, 3))
+    lP = Hecke.prime_ideals(A)
+    @test length(lP) == 1 && dim(lP[1]) == 7
+
+    A = group_algebra(GF(2), small_group(12, 3))
+    lP = Hecke.prime_ideals(A)
+    @test length(lP) == 2 && issetequal(dim.(lP), [10, 11])
+    for P in lP
+      CC, = quo(A, P)
+      @test is_simple(CC)
     end
   end
 end

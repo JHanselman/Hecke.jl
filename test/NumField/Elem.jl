@@ -275,3 +275,47 @@ let
   r = roots(w^3 - (phi - srm)//2)
   @test length(r) == 1
 end
+
+let # issue #2079, Hanselmann
+
+  Kt, t = polynomial_ring(QQ, "t"; cached = false)
+  p = 1200*t^6 - 2800*t^5 - 2232*t^4 + 1444*t^3 + 346*t^2 - 384*t - 175
+  b = -25
+  c = 36//25*t^10 - 96//25*t^9 - 29//25*t^8 + 61//25*t^7 + 9//100*t^6 - 3//50*t^5 + 29//400*t^4 - 51//400*t^3 + 7//800*t^2 + 27//400*t + 9//400
+  L, o = number_field(p; cached = false)
+  Lu, u = polynomial_ring(L, "u"; cached = false)
+  f = L(b) * u^2 + L(c)
+  @test length(roots(f)) == 2
+end
+
+let
+  Qx, x = QQ["x"]
+  K, a = number_field([x^2 - 2, x^2 - 3])
+  @test absolute_minpoly(a[1])(x) == x^2 - 2
+end
+
+let # norm of polynomials
+  QQ, = rationals_as_number_field()
+  Qx, xQ = QQ["x"]
+  F, _ = number_field(xQ^2-2)
+  Fx, xF = F["x"]
+  d = degree(F)
+  @test norm(xF)(xQ) == xQ^(d)
+  for i in 1:11
+    @test norm(xF^i + xF^(i+1))(xQ) == xQ^(i*d) * norm(xF+1)(xQ)
+  end
+end
+
+let
+  QQ, = rationals_as_number_field()
+  Qx, xQ = QQ["x"]
+  F, a = number_field(xQ^2 - 2)
+  Fx, xF = F["x"]
+  L, z = number_field(xF^2 - 3)
+  Lt, t = L["t"]
+  d = degree(F)
+  @test norm(xF, F)(xQ) == xQ^(d)
+  for i in 1:11
+    @test norm(t^i + t^(i+1), F)(xF) == xF^(i*d) * norm(t + 1, F)(xF)
+  end
+end

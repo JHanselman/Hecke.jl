@@ -346,6 +346,8 @@ mutable struct SRow{T, S} # S <: AbstractVector{T}
 
   function SRow(R::NCRing, A::Vector{Tuple{Int, T}}) where T
     r = SRow(R)
+    sizehint!(r.pos, length(A))
+    sizehint!(r.values, length(A))
     for (i, v) = A
       if !iszero(v)
         @assert parent(v) === R
@@ -358,6 +360,8 @@ mutable struct SRow{T, S} # S <: AbstractVector{T}
 
   function SRow(R::NCRing, A::Vector{Tuple{Int, Int}})
     r = SRow(R)
+    sizehint!(r.pos, length(A))
+    sizehint!(r.values, length(A))
     for (i, v) = A
       if !iszero(v)
         push!(r.pos, i)
@@ -651,19 +655,9 @@ end
 #
 ################################################################################
 
-mutable struct AbsNumFieldOrderSet{T}
+struct AbsNumFieldOrderSet{T}
   nf::T
-
-  function AbsNumFieldOrderSet{T}(a::T, cached::Bool = false) where {T}
-    return get_cached!(AbsNumFieldOrderSetID, a, cached) do
-      return new{T}(a)::AbsNumFieldOrderSet{T}
-    end::AbsNumFieldOrderSet{T}
-  end
 end
-
-AbsNumFieldOrderSet(a::T, cached::Bool = false) where {T} = AbsNumFieldOrderSet{T}(a, cached)
-
-const AbsNumFieldOrderSetID = AbstractAlgebra.CacheDictType{NumField, AbsNumFieldOrderSet}()
 
 @attributes mutable struct AbsNumFieldOrder{S, T} <: NumFieldOrder
   nf::S
@@ -727,7 +721,7 @@ const AbsNumFieldOrderSetID = AbstractAlgebra.CacheDictType{NumField, AbsNumFiel
   end
 
   function AbsNumFieldOrder{S, T}(K::S, x::FakeFmpqMat, xinv::FakeFmpqMat, B::Vector{T}, cached::Bool = false) where {S, T}
-    return get_cached!(AbsNumFieldOrderID, (K, x), cached) do
+    return get_cached!(AbsNumFieldOrderID(K), x, cached) do
       z = AbsNumFieldOrder{S, T}(K)
       n = degree(K)
       z.basis_nf = B
@@ -738,7 +732,7 @@ const AbsNumFieldOrderSetID = AbstractAlgebra.CacheDictType{NumField, AbsNumFiel
   end
 
   function AbsNumFieldOrder{S, T}(K::S, x::FakeFmpqMat, cached::Bool = false) where {S, T}
-    return get_cached!(AbsNumFieldOrderID, (K, x), cached) do
+    return get_cached!(AbsNumFieldOrderID(K), x, cached) do
       z = AbsNumFieldOrder{S, T}(K)
       n = degree(K)
       B_K = basis(K)
@@ -755,7 +749,7 @@ const AbsNumFieldOrderSetID = AbstractAlgebra.CacheDictType{NumField, AbsNumFiel
   function AbsNumFieldOrder{S, T}(b::Vector{T}, cached::Bool = false) where {S, T}
     K = parent(b[1])
     A = basis_matrix(b, FakeFmpqMat)
-    return get_cached!(AbsNumFieldOrderID, (K, A), cached) do
+    return get_cached!(AbsNumFieldOrderID(K), A, cached) do
       z = AbsNumFieldOrder{parent_type(T), T}(K)
       z.basis_nf = b
       z.basis_matrix = A
@@ -770,7 +764,7 @@ AbsNumFieldOrder(K::S, x::FakeFmpqMat, cached::Bool = false) where {S} = AbsNumF
 
 AbsNumFieldOrder(b::Vector{T}, cached::Bool = false) where {T} = AbsNumFieldOrder{parent_type(T), T}(b, cached)
 
-const AbsNumFieldOrderID = AbstractAlgebra.CacheDictType{Tuple{Any, FakeFmpqMat}, AbsNumFieldOrder}()
+@attr AbstractAlgebra.CacheDictType{FakeFmpqMat, order_type(S)} AbsNumFieldOrderID(K::S) where {S <: NumField} = AbstractAlgebra.CacheDictType{FakeFmpqMat, order_type(S)}()
 
 const AbsSimpleNumFieldOrder = AbsNumFieldOrder{AbsSimpleNumField, AbsSimpleNumFieldElem}
 
@@ -1401,31 +1395,32 @@ mutable struct FactorBaseSingleP{T}
   lf::Vector{T}
 
   function FactorBaseSingleP(p::Integer, lp::Vector{Tuple{Int, AbsNumFieldOrderIdeal{AbsSimpleNumField, AbsSimpleNumFieldElem}}})
-    Fpx = polynomial_ring(residue_ring(ZZ, UInt(p), cached=false)[1], "x", cached=false)[1]
+    Fp = residue_ring(ZZ, UInt(p), cached=false)[1]
     O = order(lp[1][2])
     K = O.nf
-    return FactorBaseSingleP(Fpx(Globals.Zx(K.pol)), lp)
+    return FactorBaseSingleP(Fp, lp)
   end
 
   function FactorBaseSingleP(p::ZZRingElem, lp::Vector{Tuple{Int, AbsNumFieldOrderIdeal{AbsSimpleNumField, AbsSimpleNumFieldElem}}})
-    Fpx = polynomial_ring(residue_ring(ZZ, p, cached=false)[1], "x", cached=false)[1]
+    Fp = residue_ring(ZZ, p, cached=false)[1]
     O = order(lp[1][2])
     K = O.nf
-    return FactorBaseSingleP(Fpx(Globals.Zx(K.pol)), lp)
+    return FactorBaseSingleP(Fp, lp)
   end
 
-  function FactorBaseSingleP(fp::S, lp::Vector{Tuple{Int, AbsNumFieldOrderIdeal{AbsSimpleNumField, AbsSimpleNumFieldElem}}}) where {S}
-    FB = new{S}()
+  function FactorBaseSingleP(Fp::S, lp::Vector{Tuple{Int, AbsNumFieldOrderIdeal{AbsSimpleNumField, AbsSimpleNumFieldElem}}}) where {S}
+    FB = new{poly_type(S)}()
     FB.lp = lp
-    p = characteristic(base_ring(fp))
+    p = characteristic(Fp)
     FB.P = p
     O = order(lp[1][2])
     K = O.nf
 
     if isone(leading_coefficient(K.pol)) && isone(denominator(K.pol)) && (length(lp) >= 3 && !is_index_divisor(O, p)) # ie. index divisor or so
       Qx = parent(K.pol)
-      Fpx = parent(fp)
-      lf = [ gcd(fp, Fpx(Globals.Zx(Qx(K(P[2].gen_two)))))::S for P = lp]
+      Fpx = polynomial_ring(Fp, cached = false)[1]
+      fp = change_base_ring(Fp, numerator(defining_polynomial(K), Globals.Zx); parent = Fpx)
+      lf = [ gcd(fp, change_base_ring(Fp, numerator(Qx(K(P[2].gen_two)), Globals.Zx); parent = Fpx)) for P = lp]
       FB.lf = lf
       FB.pt = FactorBase(Set(lf), check = false)
     end
@@ -1998,9 +1993,9 @@ mutable struct ZpnGModule <: GModule
     z.G=G
     z.V=V
     z.R=parent(G[1][1,1])
-    f=factor(ZZRingElem(z.R.n))
-    @assert length(f.fac)==1
-    z.p=Int(first(keys(f.fac)))
+    fl, k, p = is_prime_power_with_data(Int(z.R.n))
+    @req fl "Modulus ($(z.R.n)) must be a prime power"
+    z.p=p
     return z
   end
 
@@ -2192,7 +2187,7 @@ mutable struct HenselCtx
     Rx,x = polynomial_ring(Native.GF(UInt(p), cached=false), "x", cached=false)
     a.lf = Nemo.nmod_poly_factor(UInt(p))
     ccall((:nmod_poly_factor, libflint), UInt,
-          (Ref{Nemo.nmod_poly_factor}, Ref{fpPolyRingElem}), (a.lf), Rx(f))
+          (Ref{Nemo.nmod_poly_factor}, Ref{fpPolyRingElem}), (a.lf), change_base_ring(base_ring(Rx), f; parent = Rx))
     r = a.lf.num
     a.r = r
     a.LF = fmpz_poly_factor()

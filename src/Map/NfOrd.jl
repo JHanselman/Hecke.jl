@@ -73,7 +73,7 @@ mutable struct NfOrdToFqNmodMor <: Map{AbsSimpleNumFieldOrder, fqPolyRepField, H
     psmall = Int(p)
     R = Native.GF(psmall, cached = false)
     Rx, x = polynomial_ring(R, "_\$", cached = false)
-    F = fqPolyRepField(Rx(g), Symbol("_\$"), false)
+    F = fqPolyRepField(change_base_ring(R, g; parent = Rx), Symbol("_\$"), false)
     d = degree(g)
     n = degree(O)
     imageofbasis = Vector{fqPolyRepFieldElem}(undef, n)
@@ -272,7 +272,7 @@ function NfOrdToFqMor(O::AbsSimpleNumFieldOrder, P::AbsNumFieldOrderIdeal{AbsSim
   p = minimum(P)
   R = Native.GF(p, cached = false)
   Rx, x = polynomial_ring(R, "_\$", cached = false)
-  F = FqPolyRepField(Rx(g), Symbol("_\$"), false)
+  F = FqPolyRepField(change_base_ring(R, g; parent = Rx), Symbol("_\$"), false)
   d = degree(g)
   n = degree(O)
   imageofbasis = Vector{FqPolyRepFieldElem}(undef, n)
@@ -559,7 +559,7 @@ function NfOrdToFqFieldMor(O::AbsSimpleNumFieldOrder, P::AbsNumFieldOrderIdeal{A
   p = minimum(P)
   R = GF(p, cached = false)
   Rx, x = polynomial_ring(R, "_\$", cached = false)
-  F, = Nemo._residue_field(Rx(g), "_\$", check = false)
+  F, = Nemo._residue_field(change_base_ring(R, g; parent = Rx), "_\$", check = false)
   d = degree(g)
   n = degree(O)
   imageofbasis = Vector{FqFieldElem}(undef, n)
@@ -1074,7 +1074,17 @@ mutable struct NfToGFMor_easy <: Map{AbsSimpleNumField, fpField, HeckeMap, NfToG
   function NfToGFMor_easy(a::NfOrdToGFMor, k::AbsSimpleNumField)
     r = new()
     r.Fq = codomain(a)
-    r.defining_pol = a.poly_of_the_field
+    if isdefined(a, :poly_of_the_field)
+      r.defining_pol = a.poly_of_the_field
+    else
+      # this happens if the defining polynomial is not nice
+      rt = roots(r.Fq, change_base_ring(r.Fq, defining_polynomial(k); cached = false))
+      gk = gen(k)
+      d = denominator(gk, order(a.P))
+      fa = findall(x -> (gen(k)-lift(x))*d in a.P, rt)
+      @assert length(fa) == 1
+      r.defining_pol = polynomial(r.Fq, [-rt[fa[1]], r.Fq(1)])
+    end
     r.header = MapHeader(k, r.Fq)
     r.s = r.Fq()
     r.t = zero(parent(r.defining_pol))

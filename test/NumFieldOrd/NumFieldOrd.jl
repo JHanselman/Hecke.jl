@@ -85,7 +85,6 @@ end
 
   @test domain(projL.map_subfield) === OE
   @test mL(gen(L)//2) == gen(FL)//2
-  @test absolute_degree(FL) == 6
   @test characteristic(Hecke.prime_field(FL)) == 11
 
   K,a = rationals_as_number_field()
@@ -154,5 +153,61 @@ end
   @test p1 != p2
 end
 
+let # extend_easy for bad polynomials
+  Qx, x = QQ[:x]
+  f = x^2 - 1//47
+  k, _ = number_field(f; cached = false)
+  ok = maximal_order(k)
+  lp = prime_ideals_over(ok, 11)
+  F, mF = Hecke.ResidueFieldSmallDegree1(ok, lp[1])
+  mFF = Hecke.extend_easy(mF, k)
+  @test is_zero(mFF(k(uniformizer(lp[1]))))
+  @test !is_zero(mFF(k(uniformizer(lp[2]))))
+  for i in 1:10
+    a = rand(ok, -2:2)
+    @test mF(a) == mFF(k(a))
+    @test mFF(k(a)//3) == mF(a) * inv(F(3))
+  end
+
+  f = 8*x^3 + 4*x^2 - 1//3*x-1
+  k, _ = number_field(f; cached = false)
+  ok = maximal_order(k)
+  lp = prime_ideals_over(ok, 17)
+  P = only(P for P in lp if degree(P) == 1)
+  Q = only(P for P in lp if degree(P) != 1)
+  F, mF = Hecke.ResidueFieldSmallDegree1(ok, P)
+  mFF = Hecke.extend_easy(mF, k)
+  @test is_zero(mFF(k(uniformizer(P))))
+  @test !is_zero(mFF(k(uniformizer(Q))))
+  for i in 1:10
+    a = rand(ok, -2:2)
+    @test mF(a) == mFF(k(a))
+    @test mFF(k(a)//3) == mF(a) * inv(F(3))
+  end
+end
+
+@testset "Misc-subsets" begin
+  #without 
+  # a=[314721,x^4-x^3-46*x^2-47*x+2209]
+  # bnd=ZZ(10)^11
+  # k, _ = number_field(a[2]; cached = false, check = false)
+  # L = abelian_extensions(k, [2], bnd, signatures = [(2,3)])
+  #will encounter an infinite recursion in subsets (Malle)
+
+  @test_throws ArgumentError subsets(3, -1)
+  @test_throws ArgumentError subsets(-3, 1)
+  @test_throws ArgumentError subsets(-3, -1)
+  @test length(subsets(3, 3)) == 1
+  @test length(subsets(3, 2)) == 3
+  @test length(subsets(3, 4)) == 0
+end
+
+@testset "Misc-rcf(QQ)" begin
+  G = Hecke.ray_class_groupQQ(maximal_order(rationals_as_number_field()[1]), 100, false, 0)[1]
+  @test order(G) == 20
+
+  G = Hecke.ray_class_groupQQ(maximal_order(rationals_as_number_field()[1]), 100, true, 0)[1]
+  @test order(G) == 40
+end
 
 

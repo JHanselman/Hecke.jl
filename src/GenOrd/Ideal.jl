@@ -800,7 +800,7 @@ function StructureConstantAlgebra(O::GenOrd, I::GenOrdIdl, p::RingElem, phi)
   end
 
   if isone(BO[1])
-    one = zeros(FQ, r)
+    one = [zero(FQ) for _ in 1:r]
     one[1] = FQ(1)
     A = StructureConstantAlgebra(FQ, mult_table, one)
   else
@@ -1063,7 +1063,7 @@ end
 
 function residue_field(O::GenOrd, P::GenOrdIdl, check::Bool = true)
   a, g, b, phi = get_residue_field_data(P)::Tuple{elem_type(O),
-                                                  dense_poly_type(base_ring(O)),
+                                                  poly_type(base_ring(O)),
                                                   Vector{dense_matrix_type(base_ring(O))},
                                                   Any} # not optimal
   gg = map_coefficients(phi, g)

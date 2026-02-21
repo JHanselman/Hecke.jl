@@ -137,7 +137,7 @@ end
 function hom(K::S, L::T, x...; inverse = nothing,
                                check::Bool = true,
                                compute_inverse = false) where {S <: Union{NumField, QQField},
-                                                               T <: Ring}
+                                                               T <: NCRing}
   header = MapHeader(K, L)
 
   #if length(x) == 0
@@ -238,9 +238,9 @@ mutable struct MapDataFromAnticNumberField{T}
 end
 
 # Helper functions to create the type
-map_data_type(K::AbsSimpleNumField, L::Union{NumField, QQField, Ring}) = map_data_type(AbsSimpleNumField, typeof(L))
+map_data_type(K::AbsSimpleNumField, L::Union{NumField, QQField, NCRing}) = map_data_type(AbsSimpleNumField, typeof(L))
 
-map_data_type(::Type{AbsSimpleNumField}, T::Type{S}) where {S <: Union{NumField, QQField, Ring}} = MapDataFromAnticNumberField{elem_type(T)}
+map_data_type(::Type{AbsSimpleNumField}, T::Type{S}) where {S <: Union{NumField, QQField, NCRing}} = MapDataFromAnticNumberField{elem_type(T)}
 
 # Test if data u, v specfiying a map K -> L define the same morphism
 function _isequal(K, L, u::MapDataFromAnticNumberField{T},
@@ -265,7 +265,7 @@ end
 #
 map_data(K::AbsSimpleNumField, L, ::Bool) = MapDataFromAnticNumberField{elem_type(L)}(true)
 
-function map_data(K::AbsSimpleNumField, L, x::RingElement; check = true)
+function map_data(K::AbsSimpleNumField, L, x::NCRingElement; check = true)
   if parent(x) === L
     xx = x
   else
@@ -344,7 +344,7 @@ function map_data(K::RelSimpleNumField, L, ::Bool)
   return z
 end
 
-function _bubble_up(L, y::RingElement)
+function _bubble_up(L, y::NCRingElement)
   if parent(y) === L
     yy = y
   else
@@ -353,7 +353,7 @@ function _bubble_up(L, y::RingElement)
   return yy::elem_type(L)
 end
 
-function map_data_given_base_field_data(K::RelSimpleNumField, L, z, y::RingElement; check = true)
+function map_data_given_base_field_data(K::RelSimpleNumField, L, z, y::NCRingElement; check = true)
   yy = _bubble_up(L, y)
   if check
     yyy = evaluate(map_coefficients(w -> image(z, L, w), defining_polynomial(K), cached = false), yy)
@@ -511,7 +511,7 @@ function map_data(K::RelNonSimpleNumField, L, ::Bool)
   return z
 end
 
-function _bubble_up(L, y::Vector{<: RingElement})
+function _bubble_up(L, y::Vector{<: NCRingElement})
   if all(x -> parent(x) === L, y)
     yy = y
   else
@@ -648,17 +648,11 @@ _convert_map_data(g::NumFieldHom, L) = __convert_map_data(g.image_data, L)
 
 __convert_map_data(d::MapDataFromAnticNumberField, L) = MapDataFromAnticNumberField{elem_type(L)}(d.isid ? true : L(d.prim_image))
 
-__convert_map_data(d::MapDataFromNfRel, L) = MapDataFromNfReld{elem_type(L)}(L(d.prim_image), d.isid ? true : __convert_map_data(d.base_field_map_data), d.isid)
-
 ################################################################################
 #
 #  Helper functions to pass through inverse data
 #
 ################################################################################
-
-@inline _validate_data(L, K, inverse) = validate_data(L, K, inverse)
-
-@inline _validate_data(L, K, inverse::Tuple) = validate_data(L, K, inverse...)
 
 @inline _map_data(L, K, inverse; check::Bool) = map_data(L, K, inverse, check = check)
 
@@ -1063,3 +1057,23 @@ function AbstractAlgebra.show_map_data(io::IO, f::NumFieldHom)
     end
   end
 end
+
+################################################################################
+#
+#  QQ
+#
+################################################################################
+
+struct QQHom{S} <: Map{QQField, S, HeckeMap, Any}
+  C::S
+end
+
+id_hom(::QQField) = QQHom{QQField}(QQ)
+
+domain(::QQHom) = QQ
+
+codomain(f::QQHom) = f.C
+
+image(f::QQHom, x::QQFieldElem) = codomain(f)(x)
+
+preimage(f::QQHom{QQ}, x::QQFieldElem) = x

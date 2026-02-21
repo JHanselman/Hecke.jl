@@ -368,6 +368,10 @@ function charpoly(a::GenOrdElem)
   return charpoly(representation_matrix(a))
 end
 
+function charpoly(R::PolyRing, a::GenOrdElem)
+  return charpoly(R, representation_matrix(a))
+end
+
 ################################################################################
 #
 #  Minimal polynomial
@@ -376,6 +380,10 @@ end
 
 function minpoly(a::GenOrdElem)
   return minpoly(representation_matrix(a))
+end
+
+function minpoly(R::PolyRing, a::GenOrdElem)
+  return minpoly(R, representation_matrix(a))
 end
 
 ################################################################################
@@ -407,7 +415,13 @@ julia> integral_split(1//a, zk)
 """
 function Hecke.integral_split(a::Generic.FunctionFieldElem, O::GenOrd)
   d = integral_split(coordinates(a, O), base_ring(O))[2]
-  return O(base_ring(parent(a))(d)*a, check = false), d
+  k = base_ring(parent(a))
+  if d isa ZZPolyRingElem
+    @assert k isa AbstractAlgebra.Generic.RationalFunctionField{QQFieldElem, QQPolyRingElem}
+    dd = change_base_ring(QQ, d; parent = base_ring(Generic.underlying_fraction_field(k)))
+    return O(dd*a, check = false), d
+  end
+  return O(k(d)*a, check = false), d
 end
 
 function Hecke.integral_split(a::AbsSimpleNumFieldElem, O::GenOrd)
@@ -691,8 +705,8 @@ function Hecke.maximal_order(O::GenOrd)
   @vtime :AbsNumFieldOrder 2 ld = factor(d)
   local Op
   first = true
-  for (p,k) = ld.fac
-    if k<2
+  for (p ,k) in ld
+    if k < 2
       continue
     end
     OO = pmaximal_overorder(O, p, true)
@@ -722,9 +736,19 @@ end
 ################################################################################
 
 function Hecke.discriminant(O::GenOrd)
-  d = discriminant(O.F)
-  if isdefined(O, :trans)
-    d *= det(O.trans)^2
+  if is_monic(defining_polynomial(O.F))
+    #"the" example from Jeroen is
+    #   x*y^3 + (-x + 1)*y^2 - y + x^3 + x^2
+    # and the problem is the correct power of x.
+    # The disc. is "well definined" up to the correct power of the
+    # leading coeff....
+    # The bypass is to use det(trace_mat) which is correct for orders
+    d = discriminant(O.F)
+    if isdefined(O, :trans)
+      d *= det(O.trans)^2
+    end
+  else
+    d = det(trace_matrix(O))
   end
   return O.R(d)
 end

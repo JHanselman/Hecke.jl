@@ -37,11 +37,11 @@ mutable struct HypellCrv{T}
       check = false
       #TODO: Check what d is
       d = zero(R)
-    else 
+    else
       d = 2^(4*g)*discriminant(f + divexact(h^2,4))
     end
     if d != 0 || check == false
-      
+
       C = new{T}()
 
       C.f = f
@@ -330,7 +330,7 @@ end
 Return f, h such that C is given by y^2 + h*y = f
 """
 function hyperelliptic_polynomials(C::HypellCrv{T}) where T
-  return (C.f, C.h)::Tuple{dense_poly_type(T), dense_poly_type(T)}
+  return (C.f, C.h)::Tuple{poly_type(T), poly_type(T)}
 end
 
 @doc raw"""
@@ -554,8 +554,8 @@ end
 @doc raw"""
     reduce_binary_form(f::PolyRingElem) -> PolyRingElem
 
-Given a binary form over QQ, compute the binary form with 
-minimal Julia covariant. 
+Given a binary form over QQ, compute the binary form with
+minimal Julia covariant.
 """
 #Following the preprint "Efficient reduction of binary forms"
 # by Michael Stoll.
@@ -574,16 +574,16 @@ end
 @doc raw"""
     reduce_binary_form(f::MPolyRingElem) -> MPolyRingElem
 
-Given a binary form over QQ that is stable (i.e. f is not divisible by a 
-linear form of degree m with 2m >= deg(f)), compute the binary form with 
-minimal Julia covariant. 
+Given a binary form over QQ that is stable (i.e. f is not divisible by a
+linear form of degree m with 2m >= deg(f)), compute the binary form with
+minimal Julia covariant.
 """
-function reduce_binary_form(f::MPolyRingElem)
+function reduce_binary_form(f::MPolyRingElem{T}) where T
   #Check stability
   n = total_degree(f)
   ms = values(factor(f).fac)
   for m in ms
-    if 2*m >= n 
+    if 2*m >= n
       error("Binary form is not stable.")
     end
   end
@@ -603,13 +603,14 @@ function reduce_binary_form(f::MPolyRingElem)
     # repos(map(x-> x - a, S2), S_inf) returns whether Re(zF) >= a
     # The goal is to get -1/2 <= Re(z(F)) <= 1/2
     # We first find u and l such that l- 1/2 <= Re(z(F)) <= u - 1/2.
-    if repos(map(x-> x - CC(1/2), S2), S_inf)
+    S_new = map(x-> CC(x - 1/2), S2)
+    if repos(S_new, S_inf)
       k = 0
       l = 1
       u = 2
       # Note that in Stoll's preprint u + 1/2 is written, but to test
       # when the value is no longer >= u - 1/2, we need u - 1/2 instead.
-      while repos(map(x-> x - CC(u - 1/2), S2), S_inf)
+      while test_u(u, S2, S_inf)
         k += 1
         l = u
         u = u + 2^k
@@ -623,7 +624,7 @@ function reduce_binary_form(f::MPolyRingElem)
       l = -1
       # Note that in Stoll's preprint l + 1/2 is written, but to test
       # when the value is >= l - 1/2, we need l - 1/2 instead.
-      while !repos(map(x-> x - CC(l - 1/2), S2), S_inf)
+      while !test_u(l, S2, S_inf)
         k += 1
         u = l
         l = l - 2^k
@@ -636,12 +637,12 @@ function reduce_binary_form(f::MPolyRingElem)
       # when the value is >= m - 1/2, we need m - 1/2 instead.
       if repos(map(x-> x - CC(m - 1/2), S2), S_inf)
         l = m
-      else 
+      else
         u = m
       end
     end
 
-    f = evaluate(f, [x + l*z, z])
+    f = Rxz(evaluate(f, [x + l*z, z]))
     gamma = gamma * matrix(ZZ, [[1,l],[0,1]])
     f_fin = evaluate(f, [s, Cs(1)])
     S2 = roots(f_fin;initial_prec = 200)
@@ -661,11 +662,17 @@ function reduce_binary_form(f::MPolyRingElem)
     if repos(S2_flipped, S_inf_flipped)
       return f, gamma
     end
-    f = evaluate(f, [-z,x])
+    f = Rxz(evaluate(f, [-z,x]))
     gamma = gamma * matrix(ZZ, [[0,-1],[1,0]])
   end
 end
 
+
+function test_u(u, S2, S_inf)
+  CC = parent(S2[1])
+  S_new = map(x-> x - CC(u - 1/2), S2)
+  return repos(S_new, S_inf)
+end
 
 function repos(S2::Vector{AcbFieldElem}, S_inf::Int)
   CC = parent(S2[1])
@@ -713,7 +720,7 @@ function repos(S2::Vector{AcbFieldElem}, S_inf::Int)
   I = RR(0)
   add_error!(I, RR(10^-20))
   while (!contains(I, dh(eta0)))
-    
+
     if dh(eta0) > 0
       v = eta0
     else
@@ -726,7 +733,7 @@ function repos(S2::Vector{AcbFieldElem}, S_inf::Int)
     #Not sure what the optimal way to balance this is.
     if abs(dh(etatest)) / abs(dh(eta0)) < RR(0.5)
       eta0 = etatest
-    else 
+    else
       if dh(eta0) > 0
         eta0 = (eta0+u)/2
       else

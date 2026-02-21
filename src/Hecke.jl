@@ -21,17 +21,12 @@ import Base: show, minimum, rand, prod, copy, rand, ceil, round, size, in,
              numerator, denominator, exp, maximum, intersect, reduce, sqrt, haskey, merge,
 	     powermod
 
-# To make all exported Nemo functions visible to someone using "using Hecke"
-# we have to export everything again
-# dong it the "import" route, we can pick & choose...
-
 using Artifacts
 
 using LinearAlgebra
 using Distributed
 using Printf
 using SparseArrays
-using Serialization
 using Random
 using Pkg
 
@@ -47,6 +42,7 @@ import AbstractAlgebra:
   clearindent,
   get_assertion_level,
   get_verbosity_level,
+  is_known,
   popindent,
   pushindent,
   set_assertion_level,
@@ -58,8 +54,6 @@ import LinearAlgebra: dot, nullspace, rank, ishermitian
 
 import SparseArrays: nnz
 
-import Serialization: serialize, deserialize
-
 import Random: rand!
 using Random: Sampler, SamplerTrivial, GLOBAL_RNG
 
@@ -68,6 +62,10 @@ using RandomExtensions: RandomExtensions, make, Make2, Make3, Make4
 import Nemo
 
 import Pkg
+
+# To make all exported Nemo functions visible to someone using "using Hecke"
+# we have to export everything again
+# dong it the "import" route, we can pick & choose...
 
 exclude = [:Nemo, :AbstractAlgebra, :zz, :qq, :call,
            :factors, :parseint, :strongequal, :window, :xgcd, :rows, :cols,
@@ -264,6 +262,17 @@ end
 
 using .Globals
 
+# no aliasing between elements
+function zeros_array(R::NCRing, r::Int...)
+  A = Array{elem_type(R)}(undef, r)
+  for i in eachindex(A)
+    A[i] = zero(R)
+  end
+  return A
+end
+
+zeros_array(x...) = zeros(x...)
+
 ################################################################################
 #
 #  Aliases
@@ -353,6 +362,34 @@ function conjugate_data_arb_roots(K::AbsSimpleNumField, p::Int)
         pstart = Int(ceil(1.3 * pstart))
       end
     end
+  elseif has_attribute(K, :maxreal) #Nemo.is_maxreal_type(K) is broken, wait for Nemo 0.54.2
+    p = max(p, 2)
+    d = degree(K)
+    fl, f = is_real_cyclotomic_type(K)
+    @assert fl
+    L, = cyclotomic_field(f; cached = false)
+    # we need a bit more precsion, since we multiply the real part by two
+    i = 1
+    while true
+      i += 1
+      cp = conjugate_data_arb_roots(L, p + i)
+      rreal = ArbFieldElem[]
+      rall = AcbFieldElem[]
+      @assert length(cp.complex_roots) == d
+      for c in cp.complex_roots
+        cc = real(c)
+        mul2exp!(cc, cc, 1)
+        push!(rreal, cc)
+        push!(rall, parent(c)(cc))
+      end
+      if all(!overlaps(rreal[i], rreal[j]) for i in 1:d for j in 1:i-1)
+        break
+      end
+    end
+    P = sortperm(rreal)
+    rreal = rreal[P]
+    rall = rall[P]
+    rcomplex = Vector{AcbFieldElem}(undef, 0)
   else
     # Generic case
     rootc = conjugate_data_arb(K)
@@ -573,6 +610,7 @@ include("QuadForm.jl")
 include("FieldFactory.jl")
 include("RieSrf.jl")
 include("../examples/NFDB.jl")
+include("FiniteRings/FiniteRings.jl")
 
 const _RealRings = _RealRing[_RealRing()]
 
@@ -732,6 +770,7 @@ function build_doc(; doctest=false, strict=false, format=:vitepress)
     doc_init()
   end
   Pkg.activate(docsproject) do
+    Base.invokelatest(Main.Build.build_all_tutorials, Hecke)
     Base.invokelatest(Main.Build.make, Hecke; strict=strict, local_build=true, doctest=doctest, format=format)
   end
   if format == :html
@@ -860,6 +899,9 @@ using .NormRel
 ################################################################################
 
 function fields
+end
+
+function assure_automorphisms
 end
 
 function IdGroup

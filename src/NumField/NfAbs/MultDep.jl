@@ -5,7 +5,7 @@ import Base.*
 
 """
 Given A[i] elements in K, find matrices I and U s.th.
-A^I is a basis for 
+A^I is a basis for
   <A[i] | i>/Units < K^*/Units
 actually a sub-group of the S-unit group for a coprime base
 generated from the elements in A.
@@ -14,13 +14,18 @@ A^U is a generating set for the relations:
   <A^U> < Units
 and every u s.th. A^u is a unit is in the span of U
 
-The coprime base is returned as well, the columns of I correspond to the 
+The coprime base is returned as well, the columns of I correspond to the
 ordeing of the base.
 """
-function syzygies_sunits_mod_units(A::Vector{AbsSimpleNumFieldElem}; use_ge::Bool = false, max_ord::Union{Nothing, AbsSimpleNumFieldOrder}=nothing)
+function syzygies_sunits_mod_units(A::Vector{<:Union{AbsSimpleNumFieldElem, FacElem{AbsSimpleNumFieldElem, AbsSimpleNumField}}}; use_ge::Bool = false, max_ord::Union{Nothing, AbsSimpleNumFieldOrder}=nothing, support::Union{Nothing, Vector{AbsSimpleNumFieldOrderIdeal}}=nothing)
   k = parent(A[1])
   @assert all(i->parent(i) === k, A)
-  if !use_ge
+  if !isnothing(support)
+    @assert length(support) > 0
+    cp = support
+    zk = order(support[1])
+    @assert isnothing(max_ord) || max_ord === zk
+  elseif !use_ge
     if max_ord === nothing
       zk = maximal_order(k)
     else
@@ -51,7 +56,7 @@ function syzygies_sunits_mod_units(A::Vector{AbsSimpleNumFieldElem}; use_ge::Boo
   # - M is naturally sparse, hence it makes sense
   # - for this application we need all units, hence the complete
   #   kernel - which is huge and dense...
-  # - cp seems to not be used for anything afterwards. 
+  # - cp seems to not be used for anything afterwards.
   #   It will be when we actually create the group, in the DiscLog
   h, t = Hecke.hnf_kannan_bachem(M, Val(true), truncate = true)
   return h, t, cp
@@ -162,7 +167,7 @@ function divexact(a::GeIdeal, b::GeIdeal; check::Bool=true)
 end
 
 Hecke.norm(a::GeIdeal) = norm(a.a)
-#XXX:  not sure if those 2 should get "exported", Ge does not seem to be 
+#XXX:  not sure if those 2 should get "exported", Ge does not seem to be
 #      overly fast....
 #TODO: do an integer coprime base first, then refine. Possibly also do
 #      a p-maximality for all p from the integer coprime base.
@@ -205,6 +210,7 @@ function size_reduce(M::ZZMatrix, v::ZZMatrix)
   d = diagonal(transpose(s)*s)
   for i=1:nrows(v)
     for j=nrows(M):-1:1
+      is_zero(d[j]) && continue
       x = ZZ(round((v[i:i, :]* s[:, j:j]/d[j])[1,1]))
       v[i:i, :] -= x*M[j:j, :]
     end
@@ -213,20 +219,42 @@ function size_reduce(M::ZZMatrix, v::ZZMatrix)
 end
 
 """
+reduce the rows of v modulo the lattice spanned by the rows of M.
+M should be LLL reduced.
+Also returns the transformations applied to v, so on return
+ v <- v + t*M
+"""
+function size_reduce_with_transform(M::ZZMatrix, v::ZZMatrix)
+  s = gram_schmidt_orthogonalisation(QQ.(transpose(M)))
+  d = diagonal(transpose(s)*s)
+  t = zero_matrix(ZZ, nrows(v), nrows(M))
+  for i=1:nrows(v)
+    for j=nrows(M):-1:1
+      is_zero(d[j]) && continue
+      x = ZZ(round((v[i:i, :]* s[:, j:j]/d[j])[1,1]))
+      t[i, j] = -x
+      v[i:i, :] -= x*M[j:j, :]
+    end
+  end
+  return v, t
+end
+
+
+"""
 A a vector of units in fac-elem form. Find matrices U and V s.th.
-A^U is a basis for <A>/Tor 
+A^U is a basis for <A>/Tor
 and
 A^V is a generating system for the relations of A in Units/Tor
 
-The pAdic Ctx is returned as well  
+The pAdic Ctx is returned as well
 """
 function syzygies_units_mod_tor(A::Vector{FacElem{AbsSimpleNumFieldElem, AbsSimpleNumField}})
   p = next_prime(100)
   K = base_ring(parent(A[1]))
-  m = maximum(degree, keys(factor(GF(p), K.pol).fac))
+  m = maximum(degree, first.(factor(GF(p), K.pol)))
   while m > 4
     p = next_prime(p)
-    m = maximum(degree, keys(factor(GF(p), K.pol).fac))
+    m = maximum(degree, first.(factor(GF(p), K.pol)))
   end
          #experimentally, the runtime is dominated by log
   u = FacElem{AbsSimpleNumFieldElem, AbsSimpleNumField}[]
@@ -280,7 +308,7 @@ function syzygies_units_mod_tor(A::Vector{FacElem{AbsSimpleNumFieldElem, AbsSimp
           if y === nothing
             prec *= 2
             @vprint :qAdic 1  "increase prec to ", prec
-            lu = transpose(matrix([conjugates_log(x, C, prec, all = false, flat = true) for x = u]))
+            lu = matrix([conjugates_log(x, C, prec, all = false, flat = true) for x = u])
             break
           end
           push!(s, y)
@@ -294,7 +322,7 @@ function syzygies_units_mod_tor(A::Vector{FacElem{AbsSimpleNumFieldElem, AbsSimp
         if !verify_gamma(push!(copy(u), a), gamma, ZZRingElem(p)^prec)
           prec *= 2
           @vprint :qAdic 1 "increase prec to ", prec
-          lu = transpose(matrix([conjugates_log(x, C, prec, all = false, flat = true) for x = u]))
+          lu = matrix([conjugates_log(x, C, prec, all = false, flat = true) for x = u])
           continue
         end
         @assert length(gamma) == length(u)+1
@@ -330,25 +358,25 @@ function syzygies_units_mod_tor(A::Vector{FacElem{AbsSimpleNumFieldElem, AbsSimp
     for the case of n=s+1 this is mostly the "normal" construction.
     Note: as a side, the relations do not have to be primitive.
       If they are, (and n=s+1), then H = 1
-    We deal with that by saturation  
+    We deal with that by saturation
   =#
 
   for i=1:length(uu)-1
-    append!(uu[i][2], zeros(ZZ, length(uu[end][2])-length(uu[i][2])))
+    append!(uu[i][2], [zero(ZZ) for _ in 1:length(uu[end][2])-length(uu[i][2])])
   end
   if length(uu) == 0 #all torsion
-    return [], A
+    return identity_matrix(ZZ, length(A)), matrix(ZZ, 0, length(A), []), C
   else
     U = matrix(ZZ, length(uu), length(uu[end][2]), reduce(vcat, [x[2] for x = uu]))
     U = hcat(U[:, 1:length(u)], U[:, r+1:ncols(U)])
   end
 
   U = saturate(U)
-  
+
   _, U = hnf_with_transform(transpose(U))
 
   k = base_ring(A[1])
-  
+
   U = inv(U)
   V = sub(U, 1:nrows(U), 1:ncols(U)-length(u)) #the torsion part
   U = sub(U, 1:nrows(U), ncols(U)-length(u)+1:ncols(U))
@@ -375,6 +403,30 @@ end
 function verify_gamma(a::Vector{FacElem{AbsSimpleNumFieldElem, AbsSimpleNumField}}, g::Vector{ZZRingElem}, v::ZZRingElem)
   #knowing that sum g[i] log(a[i]) == 0 mod v, prove that prod a[i]^g[i] is
   #torsion
+
+  #CF: philosophically, this is correct, but somewhere there is a
+  #    small problem.
+  #    The basic idea is that Dobrowski said
+  #      t is torsion or there is a conjugate >1+sth.
+  #      this then gives non-trivial lower bound on |L(t)|
+  #    But here we know more
+  #    the p-adic logs are all 0 (mod p^v) , so this should mean
+  #    that the element is torsion or LARGE (since p^? has to divide s.th.)
+  # 
+  t = prod([a[i]^g[i] for i=1:length(a)])
+  pr = 20
+  n = degree(base_ring(t))
+  while true
+    b = sum(x*x for x = conjugates_arb_log(t, pr))
+    D = 21/128*log(parent(b)(n))/n^2 #plain Dobrowski
+    if b > D 
+      return false
+    elseif b < D
+      return true
+    end
+    pr *= 2
+  end
+  
   #= I claim N(1-a) > v^n for n the field degree:
    Let K be one of the p-adic fields involved, set b = a^g
    then log(K(b)) = 0 (v = p^l) by assumption
@@ -383,7 +435,7 @@ function verify_gamma(a::Vector{FacElem{AbsSimpleNumFieldElem, AbsSimpleNumField
    This is true for all completions involved, and sum degrees is n
  =#
 
-  t = prod([a[i]^g[i] for i=1:length(a)])
+
   # t is either 1 or 1-t is large, norm(1-t) is div. by p^ln
   #in this case T2(1-t) is large, by the arguments above: T2>= (np^l)^2=:B
   # and, see the bottom, \|Log()\|_2^2 >= 1/4 arcosh((B-2)/2)^2
@@ -392,15 +444,13 @@ function verify_gamma(a::Vector{FacElem{AbsSimpleNumFieldElem, AbsSimpleNumField
   p = Hecke.upper_bound(ZZRingElem, log(B)/log(parent(B)(2)))
   @vprintln :qAdic 1  "using", p, nbits(v)*2
   b = conjugates_arb_log(t, max(-Int(div(p, 2)), 2))
-#  @show B , sum(x*x for x = b), is_torsion_unit(t)[1]
-  @hassert :qAdic 1 (B > sum(x*x for x = b)) == is_torsion_unit(t)[1]
-  fl =  B > sum(x*x for x = b) 
+  fl =  B > sum(x*x for x = b)
   @hassert :qAdic 2 fl == is_torsion_unit(evaluate(t))
   return fl
 end
 
 """
-A padic number a is internally written as 
+A padic number a is internally written as
   p^v*u
 for a unit u given in some precision.
 This returns u, v and the precision
@@ -508,26 +558,54 @@ end
 @doc raw"""
     multiplicative_group(A::Vector{AbsSimpleNumFieldElem}) -> FinGenAbGroup, Map
 
-Return the subgroup of the multiplicative group of the number field generated 
+Return the subgroup of the multiplicative group of the number field generated
 by the elements in `A` as an abstract abelian group together with a map
 mapping group elements to number field elements and vice-versa.
 """
-function Hecke.multiplicative_group(A::Vector{AbsSimpleNumFieldElem}; use_ge::Bool = false, max_ord::Union{Nothing, AbsSimpleNumFieldOrder} = nothing, task::Symbol = :all)
+function Hecke.multiplicative_group(A::Vector{<:Union{AbsSimpleNumFieldElem, FacElem{AbsSimpleNumFieldElem, AbsSimpleNumField}}}; use_ge::Bool = false, max_ord::Union{Nothing, AbsSimpleNumFieldOrder} = nothing, task::Symbol = :all, support::Union{Nothing, Vector{AbsSimpleNumFieldOrderIdeal}}=nothing)
 
-  S, T, cp = syzygies_sunits_mod_units(A; use_ge, max_ord)
-  u = [FacElem(A, T[i, :]) for i = 1:nrows(T)]
-  g1 = [FacElem(A, S[i, :]) for i = 1:nrows(S)] #gens for mult grp/ units
-  
+  @req (!isa(A[1], FacElem)) || !isnothing(support) "For elements in factored form, the support has to be passed in as well"
+
+  if isa(A[1], FacElem)
+    K = base_ring(parent(A[1]))
+    if length(support) == 0 #kown to be units
+      u = A
+      g1 = typeof(A[1])[]
+    else
+      S, T, cp = syzygies_sunits_mod_units(A; use_ge, max_ord, support)
+      u = Hecke._transform(A, transpose(T))
+      g1 = Hecke._transform(A, transpose(S))
+    end
+  else
+    K = parent(A[1])
+    S, T, cp = syzygies_sunits_mod_units(A; use_ge, max_ord, support)
+    u = [FacElem(A, T[i, :]) for i = 1:nrows(T)]
+    g1 = [FacElem(A, S[i, :]) for i = 1:nrows(S)] #gens for mult grp/ units
+  end
+
   U, T, C = syzygies_units_mod_tor(u)
   g2 = Hecke._transform(u, transpose(U))
-  u = Hecke._transform(u, transpose(T))
+  if length(T) == 0
+    u = [FacElem(K(1))]
+  else
+    u = Hecke._transform(u, transpose(T))
+  end
 
-  Ut, _, o = syzygies_tor(u)
+  if task == :all
+    Ut, _, o = syzygies_tor(u)
 
-  t = evaluate(Hecke._transform(u, transpose(Ut))[1])
-
-  G = abelian_group(vcat([0 for i=1:length(g1)+length(g2)], [o]))
-  g = vcat(g1, g2, [FacElem(t)])
+    if is_one(o)
+      G = abelian_group([0 for i=1:length(g1)+length(g2)])
+      g = vcat(g1, g2)
+    else
+      G = abelian_group(vcat([0 for i=1:length(g1)+length(g2)], [o]))
+      t = evaluate(Hecke._transform(u, transpose(Ut))[1])
+      g = vcat(g1, g2, [FacElem(t)])
+    end
+  elseif task == :modulo_tor
+    G = free_abelian_group(length(g1)+length(g2))
+    g = vcat(g1, g2)
+  end
 
   function im(a::FinGenAbGroupElem)
     @assert parent(a) == G
@@ -539,7 +617,7 @@ function Hecke.multiplicative_group(A::Vector{AbsSimpleNumFieldElem}; use_ge::Bo
   local gamma::Vector{ZZRingElem}
 
   function pr(a::FacElem{AbsSimpleNumFieldElem, AbsSimpleNumField})
-    @assert base_ring(parent(a)) == parent(A[1])
+    @assert parent(a) == parent(A[1]) || base_ring(parent(a)) == parent(A[1])
     c = ZZRingElem[]
     for i=1:length(cp)
       v = valuation(a, cp[i])
@@ -591,15 +669,74 @@ function Hecke.multiplicative_group(A::Vector{AbsSimpleNumFieldElem}; use_ge::Bo
         break
       end
     end
+
     for i=1:length(gamma)-1
       push!(c, divexact(gamma[i], -gamma[end]))
     end
+
+    if task == :modulo_tor || is_one(o)
+      return G(c)
+    end
+
     _, _c, _ = syzygies_tor(typeof(a)[g[end], a*prod(g2[i]^gamma[i] for i=1:length(gamma)-1)])
 
-    push!(c, divexact(_c[1,1], _c[1,2]))
+#    push!(c, divexact(_c[1,1], _c[1,2]))
+
+    c .*= _c[1,2]
+    push!(c, _c[1,1])
     return G(c)
   end
+  function pr(a::AbsSimpleNumFieldElem)
+    return pr(FacElem(a))
+  end
+
   return G, MapFromFunc(G, parent(u[1]), im, pr)
+end
+
+function Hecke.saturate(f::MapFromFunc{FinGenAbGroup, FacElemMon{AbsSimpleNumField}}, p::Int; decom = false, support::Union{Nothing, Vector{AbsSimpleNumFieldOrderIdeal}} = nothing)
+  G = domain(f)
+  @assert is_free(G) # now now due to difficulties with torsion in the saturation
+  c = Hecke.RelSaturate.compute_candidates_for_saturate(map(f, gens(G)), p, 3.5)
+  if nrows(c) == 0
+    return f
+  end
+
+  decom = Dict{AbsNumFieldOrderIdeal{AbsSimpleNumField, AbsSimpleNumFieldElem}, ZZRingElem}()
+
+  cand = [f(G(view(c, 1:ngens(G), i:i))) for i=1:ncols(c)]
+  if nrows(c) > ngens(G) #torsion added
+    K = base_ring(parent(cand[1]))
+    zeta = Hecke.torsion_units_generator(K)
+    for i=1:ncols(c)
+      cand[i] *= zeta^c[end, i]
+    end
+  end
+
+  new = typeof(cand[1])[]
+  for a = cand
+    @vprintln :Saturate 1 "Testing if element is an n-th power"
+    decom = Dict{AbsNumFieldOrderIdeal{AbsSimpleNumField, AbsSimpleNumFieldElem}, ZZRingElem}()
+    if !isnothing(support)
+      for P = support
+        decom[P] = valuation(a, P)
+      end
+    end
+    @vtime :Saturate 1 fl, x = is_power(a, p; decom)
+    if fl
+      @vprintln :Saturate 1  "The element is an n-th power"
+      push!(new, x)
+    else
+#      @show :bad
+    end
+  end
+  #TODO: MultGrp needs to be a "special" type, ie. attributes
+  #      can be on the map
+  #       -> suport can be inherited
+  #       -> the valuations
+  #       -> the data for disc log and such could to be updated
+  #      possibly the result should be the injection into the larger group?
+  #      deal with torsion
+  return multiplicative_group(vcat(map(f, gens(G)), new); task = :modulo_tor, support)[2]
 end
 
 export syzygies

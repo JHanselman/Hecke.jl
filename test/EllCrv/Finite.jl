@@ -1,8 +1,5 @@
 #using Hecke.Random
 #using Hecke.RandomExtensions
-#
-#const rng = MersenneTwister()
-#const rand_seed = rand(UInt128)
 
 @testset "Elliptic curves over finite fields" begin
 
@@ -31,10 +28,7 @@
     @test rand(rng, E1) isa T
     @test rand(rng, E1, 3) isa Vector{T}
 
-    Random.seed!(rng, rand_seed)
-    a = rand(rng, E1)
-    Random.seed!(rng, rand_seed)
-    @test a == rand(rng, E1)
+    @test reproducible(E1)
   end
 
   @testset "Order computation (Exhaustive_search)" begin
@@ -132,6 +126,40 @@
       E = elliptic_curve_from_j_invariant(K(170))
       @test @inferred is_ordinary(E) == true
     end
+
+    # brute-force check for small primes:
+    # it is trivial to factor supersingular_polynomial, and check all the candidates for j-invariant
+    p = 2
+    for _ in 1:10
+      K = GF(p,2)
+      jss = roots(change_base_ring(K, supersingular_polynomial(p)))
+      for jc in K
+        E = elliptic_curve_from_j_invariant(jc)
+        expected_supersingular = jc in jss
+        @test @inferred is_supersingular(E) == expected_supersingular
+      end
+      p = next_prime(p)
+    end
+
+    K = GF(103)
+    E = elliptic_curve_from_j_invariant(K(24))
+    @test @inferred is_supersingular(E) == true
+
+    K = GF(15485863)
+    @test @inferred !is_supersingular(elliptic_curve_from_j_invariant(K(0)))
+    @test @inferred is_supersingular(elliptic_curve_from_j_invariant(K(1728)))
+
+    K = GF(15485917)
+    @test @inferred !is_supersingular(elliptic_curve_from_j_invariant(K(0)))
+    @test @inferred !is_supersingular(elliptic_curve_from_j_invariant(K(1728)))
+
+    K = GF(15485927)
+    @test @inferred is_supersingular(elliptic_curve_from_j_invariant(K(0)))
+    @test @inferred is_supersingular(elliptic_curve_from_j_invariant(K(1728)))
+
+    K = GF(15485933)
+    @test @inferred is_supersingular(elliptic_curve_from_j_invariant(K(0)))
+    @test @inferred !is_supersingular(elliptic_curve_from_j_invariant(K(1728)))
 
     K = GF(193, 3)
     a = gen(K)

@@ -83,6 +83,9 @@ Computes `divexact(norm(a), d)` provided the result has at most `nb` bits.
 Typically, `a` is an element of some ideal with norm `d`.
 """
 function norm_div(a::AbsSimpleNumFieldElem, d::ZZRingElem, nb::Int)
+   if !is_defining_polynomial_nice(parent(a))
+     return divexact(norm(a), d)
+   end
    z = QQFieldElem()
    # TODO:
    #CF the resultant code has trouble with denominators,
@@ -98,7 +101,7 @@ function norm_div(a::AbsSimpleNumFieldElem, d::ZZRingElem, nb::Int)
        p = next_prime(p)
        R = Native.GF(Int(p), cached = false)
        Rt, t = polynomial_ring(R, cached = false)
-       np = R(divexact(resultant(Rt(parent(a).pol), Rt(a), false), R(d)))
+       np = R(divexact(resultant(change_base_ring(R, defining_polynomial(parent(a)); parent = Rt), Rt(a), false), R(d)))
        if isone(pp)
          no = lift(np)
          pp = ZZRingElem(p)
@@ -146,12 +149,12 @@ function is_norm_divisible(a::AbsSimpleNumFieldElem, n::ZZRingElem)
   if fits(Int, m)
     R1 = residue_ring(ZZ, Int(m), cached = false)[1]
     R1x = polynomial_ring(R1, "x", cached = false)[1]
-    el = resultant_ideal(R1x(numerator(a)), R1x(K.pol))
+    el = resultant_ideal(R1x(numerator(a)), change_base_ring(R1, defining_polynomial(K); parent = R1x))
     return iszero(el)
   end
   R = residue_ring(ZZ, m, cached = false)[1]
   Rx = polynomial_ring(R, "x", cached = false)[1]
-  el = resultant_ideal(Rx(numerator(a)), Rx(K.pol))
+  el = resultant_ideal(Rx(numerator(a)), change_base_ring(R, defining_polynomial(K); parent = Rx))
   return iszero(el)
 end
 
@@ -172,12 +175,15 @@ function is_norm_divisible_pp(a::AbsSimpleNumFieldElem, n::ZZRingElem)
   if fits(Int, m)
     R1 = residue_ring(ZZ, Int(m), cached = false)[1]
     R1x = polynomial_ring(R1, "x", cached = false)[1]
-    el = resultant_ideal_pp(R1x(numerator(a)), R1x(K.pol))
-    return iszero(el)
+
+    el1 = resultant_ideal_pp(Nemo.nf_elem_to_nmod_poly!(R1x(), numerator(a)),
+                             Nemo.fmpq_poly_to_nmod_poly_raw!(R1x(), defining_polynomial(K)))
+    return iszero(el1)
   end
   R = residue_ring(ZZ, m, cached = false)[1]
   Rx = polynomial_ring(R, "x", cached = false)[1]
-  el = resultant_ideal_pp(Rx(numerator(a)), Rx(K.pol))
+  el = resultant_ideal_pp(Nemo.nf_elem_to_fmpz_mod_poly!(Rx(), numerator(a)),
+                          Nemo.fmpq_poly_to_fmpz_mod_poly_raw!(Rx(), defining_polynomial(K)))
   return iszero(el)
 end
 
@@ -265,8 +271,10 @@ function norm(f::PolyRingElem{AbsSimpleNumFieldElem})
     Qxy = polynomial_ring(Qx, "y", cached = false)[1]
 
     T = change_base_ring(Qx, K.pol, parent = Qxy)
-    h = nf_poly_to_xy(f, Qxy, Qx)
+    ff = f * inv(leading_coefficient(f)) #make monic
+    h = nf_poly_to_xy(ff, Qxy, Qx)
     N = resultant(T, h)
+    N = inv(leading_coefficient(N))*N * norm(leading_coefficient(f))
   end
   N.parent = parent(defining_polynomial(base_ring(parent(f))))
   return inflate(N, i)
@@ -373,6 +381,7 @@ function factor_trager(f::PolyRingElem{AbsSimpleNumFieldElem})
   K = base_ring(Kx)
 
   Zx = Hecke.Globals.Zx
+  Qx = Hecke.Globals.Qx
   @vtime :PolyFactor Np = norm_mod(g, p, Zx)
   while is_constant(Np) || !is_squarefree(map_coefficients(F, Np, cached = false))
     k = k + 1
@@ -390,10 +399,10 @@ function factor_trager(f::PolyRingElem{AbsSimpleNumFieldElem})
 #    d = mapreduce(x->denominator(x, A), lcm, coefficients(g), init = ZZRingElem(1))
 #    @vtime :PolyFactor 2 N = norm_mod(g*d, Zx)
 #    N = Hecke.Globals.Qx(N) * QQFieldElem(1, d)^degree(K)
-    @vtime :PolyFactor 2 N = Hecke.Globals.Qx(norm(g))
+    @vtime :PolyFactor 2 N = map_coefficients(identity, norm(g); parent=Qx)
   else
     @vtime :PolyFactor 2 N = norm_mod(g, Zx)
-    @hassert :PolyFactor 1 N == Zx(norm(g))
+    @hassert :PolyFactor 1 N == map_coefficients(identity, norm(g); parent=Zx)
   end
 
   while is_constant(N) || !is_squarefree(N)
@@ -406,7 +415,7 @@ function factor_trager(f::PolyRingElem{AbsSimpleNumFieldElem})
 
   res = typeof(f)[]
 
-  for i in keys(fac.fac)
+  for (i, _) in fac
     t = change_base_ring(K, i, parent = Kx)
     t = compose(t, gen(Kx) + k*gen(K), inner = :second)
     @vtime :PolyFactor 2 t = gcd(f, t)
@@ -463,8 +472,8 @@ function is_irreducible_easy(f::PolyRingElem{AbsSimpleNumFieldElem})
 end
 
 function _ds(fa)
-  @assert all(x->x == 1, values(fa.fac))
-  T = Int[degree(x) for x = keys(fa.fac)]
+  @assert all(x == 1 for (_, x) in fa)
+  T = Int[degree(x) for (x, _) in fa]
   M = MSet(T)
   return Set(sum(s) for s = subsets(M) if length(s) > 0)
 end
@@ -591,7 +600,6 @@ function roots(f::Generic.Poly{AbsSimpleNumFieldElem}; max_roots::Int = degree(f
     return AbsSimpleNumFieldElem[-coeff(f, 0)//coeff(f, 1)]
   end
 
-  f = divexact(f, leading_coefficient(f))
   rts = AbsSimpleNumFieldElem[]
 
   if iszero(constant_coefficient(f))
@@ -601,6 +609,17 @@ function roots(f::Generic.Poly{AbsSimpleNumFieldElem}; max_roots::Int = degree(f
     end
     _, f = remove(f, gen(parent(f)))
   end
+
+  if !is_defining_polynomial_nice(base_ring(f))
+    lf = factor(f)
+    lp = [x[1] for x = lf if degree(x[1]) == 1]
+    if length(lp) > max_roots
+      lp = lp[1:max_roots]
+    end
+    return AbsSimpleNumFieldElem[roots(x)[1] for x = lp]
+  end
+
+  f = divexact(f, leading_coefficient(f))
 
   if !is_squarefree && !Hecke.is_squarefree(f)
     g = gcd(f, derivative(f))

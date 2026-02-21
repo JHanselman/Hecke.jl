@@ -259,7 +259,7 @@ function abelian_extensions(K::AbsSimpleNumField, gtype::Vector{Int},
       # see Cohen, Advanced topics, Proposition 3.5.8
       num_ramified = div(r * n - R, n)
       # Sanity check for complex places
-      if S != (s + num_ramified//2)*n
+      if S != (s + num_ramified//2)*n || num_ramified < 0
         continue
       end
       for s in subsets(onetor, num_ramified)
@@ -524,7 +524,7 @@ function _action_on_quo(mq::FinGenAbGroupHom, act::Vector{FinGenAbGroupHom})
   R=residue_field(ZZ, n, cached=false)[1]
   quo_action=Vector{zzModMatrix}(undef, length(act))
   for s=1:length(act)
-    quo_action[s]= change_base_ring(mS.map*act[i].map*mS.imap, R)
+    quo_action[s]= change_base_ring(mS.map*act[s].map*mS.imap, R)
   end
   return ZpnGModule(S, quo_action)
 
@@ -959,7 +959,7 @@ function discriminant_conductor(C::ClassField, bound::ZZRingElem; lwp::Dict{Tupl
   n = degree(C)
   e = Int(exponent(C))
   lp = mr.fact_mod
-  abs_disc = factor(discriminant(O)^n).fac
+  abs_disc = Dict(p => n*e for (p, e) in factor(discriminant(O)))
   if isempty(lp)
     C.absolute_discriminant=abs_disc
     return true
@@ -1089,7 +1089,7 @@ function discriminant_conductorQQ(O::AbsSimpleNumFieldOrder, C::ClassField, m::I
 
   cyc_prime= is_prime(n)==true
 
-  lp=factor(m).fac
+  lp=factor(m)
   abs_disc=Dict{ZZRingElem,Int}()
 
   R=residue_ring(ZZ, m, cached=false)[1]
@@ -1179,7 +1179,7 @@ function discriminantQQ(O::AbsSimpleNumFieldOrder, C::ClassField, m::Int)
 
   cyc_prime= is_prime(n)==true
 
-  lp=factor(m).fac
+  lp=factor(m)
   abs_disc=Dict{ZZRingElem,Int}()
 
   R=residue_ring(ZZ, m, cached=false)[1]
@@ -1339,7 +1339,7 @@ function _is_conductor_minQQ(C::Hecke.ClassField, n::Int)
   K=nf(O)
 
   R=residue_ring(ZZ, mm, cached=false)[1]
-  for (_p,v) in lp.fac
+  for (_p,v) in lp
     p = ZZ(_p)
     if isodd(p)
       if v==1

@@ -326,14 +326,11 @@ end
   S = fixed_field(R, kernel(h-hh)[1])
 
   ns = norm_group(S)[1]
-  if VERSION >= v"1.13.0-DEV.970"
-    t = fixed_field(S, sub(ns, [ns[1], ns[2]])[1])
-  else
-    t = fixed_field(S, sub(ns, [ns[1], ns[3]])[1])
+  for i = subgroups(ns; quotype = [2,2])
+    t = fixed_field(S, i[1])
+    @test degree(t) == 4
+    @test is_normal(t) || normal_closure(t) == S
   end
-  @test degree(t) == 4
-  @test !is_normal(t)
-  @test normal_closure(t) == S
 end
 
 @testset "Conductor fix" begin
@@ -403,5 +400,22 @@ end
   Z = maximal_order(Q)
   @test degree(Hecke.grunwald_wang(Dict(2*Z => 2, 5*Z => 2))) == 2
   @test degree(Hecke.grunwald_wang(Dict(2*Z => 2, 5*Z => 3))) == 6
+end
+
+let # cornercase with trivial automorphism group
+  Qx, x = QQ[:x]
+  f = x^4 + 4*x^2 + 1
+  K, a = number_field(f, :a)
+  OK = maximal_order(K)
+  ab = abelian_normal_extensions(K, [4], ZZ(100000000000000000000545460846592))
+  L = number_field(ab[1])
+  @test degree(L) == 4
+end
+
+@testset "Candy" begin
+  C = cyclotomic_field(ClassField, 12)
+  @test ngens(number_field(C)) == 2
+  @test ngens(number_field(SimpleNumField, C)) == 1
+  @test degree(number_field(AbsSimpleNumField, C)) == 4
 end
 

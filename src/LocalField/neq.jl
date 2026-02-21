@@ -101,8 +101,8 @@ end
 #alternatively just use the lin. alg
 # 1+p^k/1+p^l, * = p^k/p^l, + for k<l<=2k ...
 
-h2_is_iso(::QadicField) = true
-h2_is_iso(::PadicField) = true
+h2_is_iso(K::QadicField) = prime(K) != 2
+h2_is_iso(K::PadicField) = prime(K) != 2
 function h2_is_iso(K::Hecke.LocalField)
   p = prime(K)
   e = absolute_ramification_index(K)
@@ -232,92 +232,111 @@ function solve_1_units(a::Vector{T}, b::T) where T
   #Z_p (and Z) operates on the 1-units...
   k = precision(b)
   K = parent(b)
-  old = precision(K)
-  setprecision!(K, k)
-  one = K(1)
-  if iszero(b-one)
-    setprecision!(K, old)
-    return ZZRingElem[0 for i=a], ZZRingElem(1)
-  end
-  @assert valuation(b-one) > 0
-  @assert all(x->parent(x) == K , a)
-  #plan:
-  # (1+p^k/1+p^l, *) = (p^k/p^l, +) for k<=l<=2k
-  #so we start with k=1, l=2 to find the exponents mod p
-  #remove this from b
-  #try to find the next part (mod p^2), ...
-  #
   e = absolute_ramification_index(K)
   f = absolute_inertia_degree(K)
-  pi = uniformizer(K)
-  p = prime(K)
-  l = 1
-  cur_a = copy(a)
-  cur_b = b
-#  @assert degree(K) == e
-  Qp = absolute_base_field(K)
-  Zp = ring_of_integers(Qp)
-  expo_mult = identity_matrix(ZZ, length(cur_a))
-  #transformation of cur_a to a
-  expo = zero_matrix(ZZ, 1, length(cur_a))
-  pk = ZZRingElem(p)
+  #+e so that the last p-adic digit of the coefficients is well defined.
+  setprecision(K, k+e) do
+    one = K(1)
+    @assert precision(one) >= k+e
+    if iszero(b-one)
+      return ZZRingElem[0 for i=a], ZZRingElem(1)
+    end
+    @assert valuation(b-one) > 0
+    @assert all(x->parent(x) == K , a)
+    #plan:
+    # (1+p^k/1+p^l, *) = (p^k/p^l, +) for k<=l<=2k
+    #so we start with k=1, l=2 to find the exponents mod p
+    #remove this from b
+    #try to find the next part (mod p^2), ...
+    #
+    pi = uniformizer(K)
+    p = prime(K)
+    l = 1
+  #  @assert degree(K) == e
+    Qp = absolute_base_field(K)
+    Zp = ring_of_integers(Qp)
+    expo_mult = identity_matrix(ZZ, length(a))
+    #transformation of cur_a to a
+    expo = zero_matrix(ZZ, 1, length(a))
+    pk = ZZRingElem(p)
 
-  val_offset = e .* map(valuation, absolute_basis(K))
-  pow_b = ZZRingElem(1)
+    val_offset = e .* map(valuation, absolute_basis(K))
+    cur_b = setprecision(b, k+e)
+    cur_a = [setprecision(x, k+e) for x = a]
+    b = setprecision(b, k+e)
+    a = [setprecision(x, k+e) for x = a]
+    pow_b = ZZRingElem(1)
 
-  while l <= k
-#    @show 1, l, pow_b, k, expo
-    last_val = e*valuation(cur_b-one)
-#    @show expo_mult
-    @assert e*valuation(cur_b-one) >= l
-    @assert all(x->isone(x) || e*valuation(x-one) >= l, cur_a)
+    while l <= k
+      last_val = e*valuation(cur_b-one)
+  #    @show expo_mult
+      if false && e*valuation(cur_b-one) >= l - 10 #TODO::: understand the prececision
+                                          #        loss
+      #= bad input from
+        L = padic_field(3; precision = 50)
+        lt, t = L[:t]
+        f = 3*t+t^3
+        divexact(f, t)(f(f))
+        e, _ = eisenstein_extension(ans)
+        a, ma = unit_group(e)
 
-    A = abelian_group([p^max(0, ceil(Int, (l-v)//e)) for v = val_offset])
-    h = hom(free_abelian_group(length(cur_a)), A, [A([lift(ZZ, x) for x =  absolute_coordinates(divexact(y-one, pi^l))]) for y = cur_a])
-    lhs = A([lift(ZZ, x) for x = absolute_coordinates(divexact(cur_b -one, pi^l))])
-    fl, s = has_preimage_with_preimage(h, lhs)
-    _k, _mk = kernel(h)
-    #if kernel has HNF, the next step is cheaper...
-    _mk.map = hnf(_mk.map)
-    #to find a nice preimage
-    reduce_mod_hnf_ur!(s.coeff, _mk.map)
-#    @show s
-    # to verify that this is a "legal" operation... the hom constructor
-    # will verify that this is legal
-    # hom(domain(_mk), codomain(_mk), [_mk(x) for x = gens(domain(_mk))])
+        in precision 10, inv failed.
+      =#
 
-    if !fl
-      pow_b *= p
-      cur_b = cur_b^p
-      expo = expo * p
-      if iszero(cur_b-one)
         break
       end
+      @assert e*valuation(cur_b-one) >= l
+      @assert precision(cur_b) > k
+      @assert all(x->isone(x) || e*valuation(x-one) >= l, cur_a)
+
+      A = abelian_group([p^max(0, ceil(Int, (l-v)//e)) for v = val_offset])
+      h = hom(free_abelian_group(length(cur_a)), A, [A([lift(ZZ, x) for x =  absolute_coordinates(divexact(y-one, pi^l))]) for y = cur_a])
+      lhs = A([lift(ZZ, x) for x = absolute_coordinates(divexact(cur_b -one, pi^l))])
+      fl, s = has_preimage_with_preimage(h, lhs)
+      _k, _mk = kernel(h)
+      #if kernel has HNF, the next step is cheaper...
+      _mk.map = hnf(_mk.map)
+      #to find a nice preimage
+      reduce_mod_hnf_ur!(s.coeff, _mk.map)
+  #    @show s
+      # to verify that this is a "legal" operation... the hom constructor
+      # will verify that this is legal
+      # hom(domain(_mk), codomain(_mk), [_mk(x) for x = gens(domain(_mk))])
+
+      if !fl
+        pow_b *= p
+        cur_b = cur_b^p
+        expo = expo * p
+        if iszero(cur_b-one)
+          break
+        end
+        last_val = e*valuation(cur_b-one)
+        continue
+      end
+
+      expo += s.coeff * expo_mult
+      expo_mult = reduce(vcat, [_mk(x).coeff for x = gens(_k)])*expo_mult
+      cur_a = [prod(cur_a[i]^_mk(x)[i] for i=1:length(cur_a)) for x = gens(_k)]
+  #    @show [e*valuation(x-1) for x = cur_a]
+
+
+      pa = prod(a[i]^expo[i] for i=1:length(a))
+      cur_b = divexact(b^pow_b, pa)
+      if iszero(cur_b-one) || e*valuation(cur_b-one) >= k
+        break
+      end
+  #    @show e*valuation(cur_b-one), 2l-1, last_val, k
+      @assert e*valuation(cur_b-one) >= min(2*l-1, last_val)
       last_val = e*valuation(cur_b-one)
-      continue
-    end
 
-    expo += s.coeff * expo_mult
-    expo_mult = reduce(vcat, [_mk(x).coeff for x = gens(_k)])*expo_mult
-    cur_a = [prod(cur_a[i]^_mk(x)[i] for i=1:length(cur_a)) for x = gens(_k)]
-#    @show [e*valuation(x-1) for x = cur_a]
-
-    cur_b = divexact(b^pow_b, prod(a[i]^expo[i] for i=1:length(a)))
-    if iszero(cur_b-one) || e*valuation(cur_b-one) >= k
-      break
+      if l == k
+        break
+      end
+      l *= 2
+      l = min(l, k)
     end
-#    @show e*valuation(cur_b-one), 2l-1, last_val, k
-    @assert e*valuation(cur_b-one) >= min(2*l-1, last_val)
-    last_val = e*valuation(cur_b-one)
-
-    if l == k
-      break
-    end
-    l *= 2
-    l = min(l, k)
+    return [expo[1, i] for i=1:length(cur_a)], pow_b
   end
-  setprecision!(K, old)
-  return [expo[1, i] for i=1:length(cur_a)], pow_b
 end
 
 function is_norm(K::Hecke.LocalField, b::Union{QadicFieldElem,PadicFieldElem,Hecke.LocalFieldElem})
@@ -632,6 +651,7 @@ function frobenius_equation(c::Hecke.LocalFieldElem, F::Union{PadicField, QadicF
     while true
       local gamma
       while true
+        #TODO: solve over residue field first, then any lift should work!
         gamma = random_elem(E)#*uniformizer(E, -absolute_ramification_index(E))
         if !iszero(gamma) && valuation(gamma) == 0
           break
@@ -781,7 +801,7 @@ function local_fundamental_class_serre(mKL::LocalFieldMor)
   pi_inv = inv(pi)
 
   #if (like here) L is Eisenstein over unram, then the automorphisms are easier
-  
+
   if ramification_index(L) == degree(L) && e > 1#so we're ramified
     #thus Gal(E/base_field(L)) = Gal(L/base_field(L)) x unram of base_field
     bL = base_field(L)
@@ -1002,7 +1022,7 @@ function norm_equation_unramified(L::Hecke.LocalField, b::Hecke.LocalFieldElem)
 end
 
 
-function _order_1_unit(a::LocalFieldElem)
+function _order_1_unit(a::Union{PadicFieldElem, QadicFieldElem, LocalFieldElem})
   if isone(a)
     return ZZRingElem(1)
   end
@@ -1021,7 +1041,7 @@ function _order_1_unit(a::LocalFieldElem)
   return p^k
 end
 
-function one_unit_group(K::LocalField)
+function one_unit_group(K::T) where T <: Union{PadicField, QadicField, LocalField}
   gens = one_unit_group_gens(K)
 
   if length(gens) == absolute_degree(K)
@@ -1030,7 +1050,7 @@ function one_unit_group(K::LocalField)
     from_G = function (g::FinGenAbGroupElem)
       return prod(gens[i]^g[i] for i=1:length(gens))
     end
-    to_G = function (a::LocalFieldElem)
+    to_G = function (a::Union{PadicFieldElem, QadicFieldElem, LocalFieldElem})
       @assert parent(a) == K
       s, e = solve_1_units(gens, a)
       @assert e == 1
@@ -1041,7 +1061,17 @@ function one_unit_group(K::LocalField)
     rel, po = solve_1_units(gens[1:end-1], gens[end])
     push!(rel, -po)
     h, t = hnf_with_transform(matrix(ZZ, length(gens), 1, rel))
-    while h[1,1] > 20
+    #= Lorenz, Algebra II, Satz 8:
+      r = ceil(Int, e/p-1)
+      then 1+P^r < one-unit-group is torsion free
+      so order of torsion <= p^r
+      The order is a power of p by stack overflow:
+      (1+x)^z = 1, z = p^a v, uv = 1 =>
+      (1+x)^z = 1 = (1+x)^zv = (1+x)^p^a
+    =#
+    p = prime(K)
+    max_tor = p^ceil(Int, absolute_ramification_index(K)//(p-1))
+    while h[1,1] > max_tor
       #=
       Eisenstein extension with defining polynomial x^2 + (2^1 + 2^2 + 2^3 + 2^4 + 2^5 + 2^6 + 2^7 + 2^8 + 2^9 + 2^10 + 2^11 + 2^12 + 2^13 + 2^14 + 2^15 + 2^16 + 2^17 + 2^18 + 2^19 + 2^20 + 2^21 + 2^22 + 2^23 + 2^24 + 2^25 + 2^26 + 2^27 + 2^28 + 2^29 + 2^30 + 2^31 + O(2^32))*x + 2^1 + O(2^32) over Unramified extension of 2-adic numbers of degree 1
 
@@ -1076,13 +1106,13 @@ function one_unit_group(K::LocalField)
       push!(tor, setprecision(tor[end]*tor[2], pr))
     end
 
-    ord = map(_order_1_unit, gens[2:end])
+    ord = map(_order_1_unit, bas[2:end])
     ord = vcat(h[1,1], [minimum(ord) for x = bas[2:end]])
     G = abelian_group(ord)
     from_G = function (g::FinGenAbGroupElem)
       return prod(bas[i]^g[i] for i=1:length(gens))
     end
-    to_G = function (a::LocalFieldElem) #still uncertain
+    to_G = function (a::Union{PadicFieldElem, QadicFieldElem, LocalFieldElem})
       s, p = solve_1_units(bas[2:end], a)
       s = [divexact(x, p) for x = s]
       y = prod(bas[i+1]^s[i] for i=1:length(s)) * inv(a)
@@ -1125,7 +1155,7 @@ function teichmuller(a::LocalFieldElem)
   end
 end
 
-function unit_group(K::LocalField)
+function unit_group(K::T) where T <: Union{QadicField, PadicField, LocalField}
   U, mU = one_unit_group(K)
   k, mk = residue_field(K)
   u, mu = unit_group(k)
@@ -1143,7 +1173,7 @@ function unit_group(K::LocalField)
     return uniformizer(K)^g[1] * gk^pro[2](g)[1] * mU(pro[3](g))
   end
 
-  to_G = function(x::LocalFieldElem)
+  to_G = function (x::Union{PadicFieldElem, QadicFieldElem, LocalFieldElem})
     v = Int(absolute_ramification_index(K)*valuation(x))
     x *= uniformizer(K)^-v
     @assert valuation(x) == 0
@@ -1185,16 +1215,16 @@ end
 @doc raw"""
     is_local_norm(mkK::Map, a::AbsSimpleNumFieldElem) -> Bool
 
-Let    
+Let
     ```mkK : k \to K```
-be a map (embedding) of number fields.    
+be a map (embedding) of number fields.
 
 Tests if ``a`` is a local norm for the relative extension implicit in the map.
 That is for a prime ideal ``p`` in ``k`` let ``Q_i`` the primes above.
-``a`` is a local norm if there are ``b_i`` in the completions at ``Q_i`` s.th. the 
+``a`` is a local norm if there are ``b_i`` in the completions at ``Q_i`` s.th. the
     ```\prod N(b_i) = q```
 where the norm ``N`` is form the completion at ``Q_i`` down to the completion
-at ``p``.  
+at ``p``.
 """
 function is_local_norm(mkK::Map{AbsSimpleNumField, AbsSimpleNumField}, a::AbsSimpleNumFieldElem)
 
@@ -1221,7 +1251,7 @@ function is_local_norm(mkK::Map{AbsSimpleNumField, AbsSimpleNumField}, a::AbsSim
   #for unram. primes, only the valuation counts: the local norm is surjective
   #on units
   #inf. places
-  if signature(k)[1] > 0 
+  if signature(k)[1] > 0
     for i = complex_places(K)
       ki = restrict(embeddings(i)[1], mkK)
       if isreal(ki) && real(evaluate(a, ki)) < 0
@@ -1248,7 +1278,7 @@ function is_local_norm(mkK::Map{AbsSimpleNumField, AbsSimpleNumField}, a::AbsSim
       continue
     end
     #the norm_cts needs to invert a matrix and this seems to loose
-    #precision proportional to the valuation 
+    #precision proportional to the valuation
     #times ram_index: due to the different ways to measure precision
     c, mc = completion(k, p, (20+v)*ramification_index(p))
 
@@ -1308,7 +1338,6 @@ function is_local_norm(K::Hecke.RelSimpleNumField{AbsSimpleNumFieldElem}, a::Abs
   return is_local_norm(hom(k, Ka, preimage(mkK, K(gen(k)))), a)
 end
 
-#TODO: qadic is also missing
 #TODO: extend the n_quo to actually compute K^*/()^n_quo
 
 @doc raw"""
@@ -1325,10 +1354,15 @@ logarithm in the finite field)
 """
 function Hecke.unit_group(K::PadicField; n_quo::Int = -1)
   p = prime(K)
+  if p == 2 #the group is Z x C2 x Z, generated by <2, -1, 5>
+    return unit_group2(K; n_quo)
+  end
   r, mr = residue_field(K)
   u, mu = unit_group(r; n_quo)
   g = teichmuller(preimage(mr, mu(u[1])))
   A = abelian_group([0, order(u), p^(precision(K)-2)])
+  gn = K(1+p) #a generator for the 1 units
+  lg = log(gn)
   function fl(y::PadicFieldElem)
     v = valuation(y)
     y *= K(p)^-v
@@ -1340,20 +1374,40 @@ function Hecke.unit_group(K::PadicField; n_quo::Int = -1)
     else
       y *= g^-f[1]
     end
-    return A(ZZRingElem[v, f[1], lift(ZZ, divexact(y-1, p))])
-  end  
-  return A, MapFromFunc(A, K, x-> p^x[1]*g^x[2]*(1+p*x[3]), fl)
+    return A(ZZRingElem[v, f[1], lift(ZZ, log(y)/lg)])
+  end
+  return A, MapFromFunc(A, K, x-> K(p)^x[1]*g^x[2]*gn^x[3], fl)
+end
+
+function unit_group2(K::PadicField; n_quo::Int = -1)
+  p = prime(K)
+  @assert p == 2
+  A = abelian_group([0, 2, p^(precision(K)-2)])
+  gn = K(1+p^2) #a generator for the 1 units
+  lg = log(gn)
+
+  function fl(y::PadicFieldElem)
+    v = valuation(y)
+    y *= K(p)^-v
+    @assert valuation(y) == 0
+    if lift(ZZ, y) % 4 == 3
+      return A(ZZRingElem[v, 1, lift(ZZ, log(-y)/lg)])
+    else
+      return A(ZZRingElem[v, 0, lift(ZZ, log(y)/lg)])
+    end
+  end
+  return A, MapFromFunc(A, K, x-> K(p)^x[1]*(-1)^x[2]*gn^x[3], fl)
 end
 
 @doc raw"""
     is_local_norm(k::Hecke.AbsSimpleNumField, a::ZZRingElem) -> Bool
 
-Tests if `a` is a local norm in `k`.    
+Tests if `a` is a local norm in `k`.
 """
 function is_local_norm(k::Hecke.AbsSimpleNumField, a::ZZRingElem)
   #need to test local norm at all primes dividing RHS + primes in D
   #well, at the prime in K above...
-  if signature(k)[1] == 0  && #totally complex 
+  if signature(k)[1] == 0  && #totally complex
      a < 0
     return false
   end
@@ -1362,7 +1416,7 @@ function is_local_norm(k::Hecke.AbsSimpleNumField, a::ZZRingElem)
 
   zk = maximal_order(k)
   S = ramified_primes(zk)
-  for p = keys(factor(a).fac)
+  for (p, _) in factor(a)
     p in S && continue
     push!(S, p)
   end
@@ -1438,7 +1492,7 @@ Given number fields ``k`` and ``K`` as well as a prime ``p`` in ``k`` and
 ```mkK: k \to K```
 ```mc: k \to k_p```
 ```mC: K \to K_Q```
-this function returns a function 
+this function returns a function
     ```N: K_Q \to k_p```
 implementing the norm of this extension.
 (In particular the extension ``K_Q/k_p`` is not explicit here)
@@ -1486,13 +1540,13 @@ function norm_ctx(mc::Map{AbsSimpleNumField, <:Hecke.LocalField}, mC::Map{AbsSim
 
   b_k = absolute_basis(c)
   b_kK = [mC(mkK(preimage(mc, x))) for x = b_k]
- 
+
   #now the product basis of b_kK, pow_rho and pow_pi
   b_K = [x*y*z for x = pow_pi for y = pow_rho for z = b_kK]
   T = matrix(hcat([absolute_coordinates(x) for x = b_K]...))
 
   S = inv(T)
-  
+
   function norm(x)
     e = divexact(eC, ec)
     f = divexact(fC, fc)

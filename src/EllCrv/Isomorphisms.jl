@@ -46,11 +46,11 @@ mutable struct EllCrvIso{T} <: Map{EllipticCurve, EllipticCurve, HeckeMap, EllCr
 end
 
 @doc raw"""
-    identity_map(E::EllipticCurve) -> EllCrvIso
+    id_hom(E::EllipticCurve) -> EllCrvIso
 
 Return the identity isomorphism on the elliptic curve $E$.
 """
-function identity_map(E::EllipticCurve)
+function id_hom(E::EllipticCurve)
   return isomorphism(E, [0, 0, 0, 1])
 end
 
@@ -351,9 +351,7 @@ Return the transformation of E under the isomorphism given by
 the isomorphism
 """
 function transform_rstu(E::EllipticCurve, T::Vector{S}) where S
-
   phi = isomorphism(E, T)
-
   return codomain(phi), phi, inv(phi)
 end
 
@@ -365,22 +363,15 @@ Return the isomorphism with domain E given by
 is calculated automatically.
 """
 function isomorphism(E::EllipticCurve{T}, isodata::Vector{T}) where T
+  @req length(isodata) == 4 "isomorphism data should be in the form [r,s,t,u]"
 
-  if length(isodata)!= 4
-    throw(DomainError(data, "Array needs to have length 4"))
-  end
   return EllCrvIso(E, isodata)
 end
 
-function isomorphism(E::EllipticCurve, data::Vector)
+function isomorphism(E::EllipticCurve, isodata::Vector)
+  @req length(isodata) == 4 "isomorphism data should be in the form [r,s,t,u]"
 
-  if length(data)!= 4
-    throw(DomainError(data, "Array needs to have length 4"))
-   end
-
-  K = base_field(E)
-  isodata = map(K, data)
-  return EllCrvIso(E, isodata)
+  return EllCrvIso(E, map(base_field(E), isodata))
 end
 
 function degree(f::EllCrvIso)
@@ -526,7 +517,7 @@ function automorphism_group_generators(E::EllipticCurve{T}) where {T}
       #Element of order 3
       for phi in auts
         phi3 = phi * phi * phi
-        if phi3 == identity_map(Es)
+        if phi3 == id_hom(Es)
           g1 = phi
         end
       end
@@ -542,7 +533,7 @@ function automorphism_group_generators(E::EllipticCurve{T}) where {T}
     elseif size == 2 #Group is Z/6Z
       g1 = auts[1]
       g2 = auts[2]
-      if (g1 * g1 * g1) != identity_map(Es)
+      if (g1 * g1 * g1) != id_hom(Es)
         return [g1]
       else
         return [g2]

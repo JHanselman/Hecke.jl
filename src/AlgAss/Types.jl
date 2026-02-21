@@ -70,6 +70,7 @@ end
   std_inv# standard involution
   decomposition
   center
+  gens
 
   function QuaternionAlgebra{T}() where {T}
     z = new{T}()
@@ -179,20 +180,18 @@ end
       A.base_ring = K
       A.group = G
       A.group_to_base = Dict{elem_type(G), Int}()
-      if !sparse
-        @assert is_finite(G)
-        d = order(Int, G)
-        A.base_to_group = Vector{elem_type(G)}(undef, d)
-      else
-        A.base_to_group = Vector{elem_type(G)}(undef, 1)
-      end
 
       if A.sparse
+        A.base_to_group = Vector{elem_type(G)}(undef, 1)
         el = _identity_elem(G)
         A.group_to_base[el] = 1
         A.base_to_group[1] = el
         A.sparse_one = sparse_row(K, [(1,one(K))])
       else
+        @assert is_finite(G)
+        d = order(Int, G)
+        A.base_to_group = Vector{elem_type(G)}(undef, d)
+
         # dense
         A.mult_table = zeros(Int, d, d)
         i = 2
@@ -399,4 +398,35 @@ mutable struct MatAlgebraElem{T, S <: MatElem} <: AbstractAssociativeAlgebraElem
     z.has_coeffs = false
     return z
   end
+end
+
+"""
+Central, simple, cyclic algebra.
+
+See also [`cyclic_algebra`](@ref).
+
+# Examples
+
+Create cyclic algebras using [`cyclic_algebra`](@ref).
+
+```jldoctest
+julia> QQx, x = QQ[:x];
+
+julia> k, g = number_field(x^2 + 1);
+
+julia> c = cyclic_algebra(k, hom(k, k, -g), QQ(4));
+```
+"""
+struct CyclicAlgebra{T, S<:Field} <: AbstractAssociativeAlgebra{T}
+  sca::StructureConstantAlgebra{T}
+  # Distinguished maximal cyclic subfield of the cyclic algebra.
+  cyc_fld::S
+  # Embedding of this cyclic subfield.
+  cyc_fld_emb::Map{S, StructureConstantAlgebra{T}}
+  # Generator of galois group of this cyclic subfield.
+  sigma::Map{S, S}
+  # Generating element π of algebra over maximal cyclic subfield.
+  pi::AssociativeAlgebraElem{T}
+  # Element such that π^d = a.
+  a::T
 end

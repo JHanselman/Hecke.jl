@@ -2,10 +2,12 @@
   include("AlgAss/AbsAlgAss.jl")
   include("AlgAss/StructureConstantAlgebra.jl")
   include("AlgAss/radical.jl")
+  include("AlgAss/AlgCyc.jl")
   include("AlgAss/AlgGrp.jl")
   include("AlgAss/AlgMat.jl")
   include("AlgAss/Elem.jl")
   include("AlgAss/Ideal.jl")
   include("AlgAss/Ramification.jl")
   include("AlgAss/AlgQuat.jl")
+  include("AlgAss/Map.jl")
 end

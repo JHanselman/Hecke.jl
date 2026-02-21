@@ -112,9 +112,9 @@
          [15, 2, 3, 1, 4]]
   @test output == Hecke._blocks([15, 2, 0, 0, 0])
 
-  @test size(Hecke._local_genera(2, 3, 1, 0, 2, false))[1]==12
-  @test size(Hecke._local_genera(2, 3, 1, 0, 2, true))[1]==4
-  @test size(Hecke._local_genera(5, 2, 2, 0, 2, true))[1]==6
+  @test length(Hecke._local_genera(2, 3, 1, 0, 2, false))[1]==12
+  @test length(Hecke._local_genera(2, 3, 1, 0, 2, true))[1]==4
+  @test length(Hecke._local_genera(5, 2, 2, 0, 2, true))[1]==6
 
   @test length(integer_genera((2,2), 10, even=true))==0  # check that a bug in catesian_product_iterator is fixed
   @test 4 == length(integer_genera((4,0), 125, even=true))
@@ -181,6 +181,19 @@
   h3 = genus(diagonal_matrix(map(ZZ,[1,3,9])), 3)
   @test Hecke._standard_mass(h3) ==  9//16
   @test direct_sum(g3,h3)==direct_sum(h3,g3)
+
+  @test Hecke.is_direct_summand_with_data(g3,g3)[1]
+
+  for g in integer_genera((1,3),120)
+    for h in integer_genera((2,2),40)
+      gh = g+h
+      @test g in gh - h
+      @test h in gh - g
+      @test all(gh == i + h for i in gh-h)
+    end
+  end
+
+
 
 
   # These examples are taken from Table 2 of [CS1988]_::
@@ -337,10 +350,12 @@
       @test G == G2
       # test local representations
       if rank(L) >= 2
-        diag = diagonal_matrix(QQFieldElem[1, 2])*basis_matrix(L)[1:2,1:end]
+        diag = diagonal_matrix(QQFieldElem[1, 2])*basis_matrix(L)[1:2,:]
         subL = lattice(ambient_space(L), diag)
-        g = genus(subL)
-        @test represents(G, g)
+        if iszero(signature_tuple(subL)[2])
+          g = genus(subL)
+          @test represents(G, g)
+        end
       end
       if rank(L) >= 3
         diag = diagonal_matrix(QQFieldElem[1, 2, 4])*basis_matrix(L)[1:3,1:end]
@@ -544,15 +559,16 @@ end
   gen1 = @inferred integer_genera((0,8), 5, even = true)
   @test length(gen1) == 1
   gen2 = @inferred integer_genera((0, 8), 5, min_scale = 1//5, even = true)
-  @test length(gen2) == 1
-  @test gen1 == gen2
+  @test length(gen2) == 7
   gen3 = integer_genera((0,8), 5)
   gen4 = integer_genera((0, 8), 5, min_scale = 1//5)
   @test all(g -> g in gen4, gen3)
   @test all(g -> g in gen4, gen2)
   @test isempty(integer_genera((0, 8), 1, min_scale = 2))
   gen = @inferred integer_genera((0,8), 1, min_scale = 1//2, max_scale = 4)
-  @test length(gen) == 53
+  @test length(gen) == 69
+  gen = @inferred integer_genera((0,8), 2^8, min_scale = 1, max_scale = 8)
+  @test length(gen) == 69
   @test !isempty(integer_genera((4,0), 5; min_scale=1, max_scale=15, even=true))
 
   # Mass
@@ -596,4 +612,34 @@ end
 @testset "Fix issues" begin
   ## Issue 1103
   @test sprint(show, "text/plain", genus(root_lattice(:E, 8), 2)) isa String
+end
+
+@testset "Canonical symbols" begin
+  # From Allcock, Gal, Mark "The Conway--Sloane calculus for 2-adic lattices"
+  sym = Vector{Int}[[0,2,1,0,0], [1,2,3,1,4], [2,3,1,1,7], [4,1,1,1,1], [5,2,1,0,0], [6,2,3,0,0], [7,1,1,1,7], [8,1,1,1,1], [9,4,3,0,0]]
+  @test Hecke._canonical_2adic_symbol(sym) == "{1}^{-2}_{II}[{2}^{2}{4}^{3}]_{7}{16}^{1}_{1}{32}^{2}_{II}{64}^{-2}_{II}[{128}^{1}{256}^{-1}]_{4}{512}^{4}_{II}"
+
+  # From Conway--Sloane's book
+  sym = Vector{Int}[[0, 2, 1, 0, 0], [1,2,3,1,6], [2,3,1,1,5],[4,1,1,1,1],[5,2,1,0,0],[6,2,3,0,0],[7,4,3,0,0],[8,1,3,1,3]]
+  @test Hecke._canonical_2adic_symbol(sym) == "{1}^{-2}_{II}[{2}^{2}{4}^{3}]_{7}{16}^{1}_{1}{32}^{2}_{II}{64}^{-2}_{II}{128}^{4}_{II}{256}^{1}_{7}"
+
+  sym1 = [[0, 2, 1, 0, 0], [1,2,3,1,1],[2,3,1,1,2],[4,1,1,1,1],[5,2,1,0,0]];
+  sym2 = [[0, 2, 1, 0, 0], [1,2,1,1,1],[2,3,1,1,2],[4,1,3,1,5],[5,2,1,0,0]];
+  sym3 = [[0, 2, 1, 0, 0], [1,2,1,1,1],[2,3,3,1,6],[4,1,1,1,1],[5,2,1,0,0]];
+  @test Hecke._canonical_2adic_symbol(sym1) == Hecke._canonical_2adic_symbol(sym2) == Hecke._canonical_2adic_symbol(sym3)
+
+  # Completeness tests
+  @test length(Hecke._local_genera(ZZ(2), 8, 10, 0, 6, false)) == 2612
+  l1 = Hecke._local_genera(ZZ(2), 4, 5, -2, 4, false)
+  @test length(l1) == 752
+
+  @test length(integer_genera((2,7), 192)) == 116
+  l2 = integer_genera((2,7), 192; min_scale = 1//15)
+  @test length(l2) == 928
+
+  # Run old code to see that nothing breaks
+  test1 = [hash(g, zero(UInt); use_canonical_symbol=false) for g in l1]
+  test2 = [hash(G, zero(UInt); use_canonical_symbol=false) for G in l2]
+  @test all(g -> count(g2 -> ==(g, g2; use_canonical_symbol=false), l1) == 1, l1)
+  @test all(g -> count(g2 -> ==(g, g2; use_canonical_symbol=false), l2) == 1, l2)
 end

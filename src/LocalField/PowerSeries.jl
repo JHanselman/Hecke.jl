@@ -24,8 +24,7 @@ is_exact_type(::Type{<: LaurentSeriesFieldValuationRingElem}) = false
 _field(R::LaurentSeriesFieldValuationRing) = R.K
 data(R::LaurentSeriesFieldValuationRing) = R.R
 
-base_ring(R::LaurentSeriesFieldValuationRing) = Union{}
-base_ring_type(::Type{<: LaurentSeriesFieldValuationRing}) = typeof(Union{})
+base_ring_type(::Type{<: LaurentSeriesFieldValuationRing}) = Union{}
 
 parent(a::LaurentSeriesFieldValuationRingElem) = a.parent
 data(a::LaurentSeriesFieldValuationRingElem) = a.a
@@ -104,7 +103,7 @@ function (Q::LaurentSeriesFieldValuationRing)(a::Generic.LaurentSeriesFieldElem)
   @assert parent(a) === _field(Q)
   @req valuation(a) >= 0 "Not an element of the valuation ring"
   R = data(Q)
-  c = zeros(base_ring(R), pol_length(a) * Generic.scale(a))
+  c = zeros_array(base_ring(R), pol_length(a) * Generic.scale(a))
   for i in 0:pol_length(a) - 1
     c[Generic.scale(a) * i + 1] = polcoeff(a, i)
   end

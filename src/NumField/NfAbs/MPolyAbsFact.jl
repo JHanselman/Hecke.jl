@@ -94,7 +94,7 @@ mutable struct HenselCtxFqRelSeries{T}
     is_squarefree(g) || return nothing
     @assert is_squarefree(g)
 
-    lf = collect(keys(factor(g).fac))
+    lf = first.(collect(factor(g)))
     return HenselCtxFqRelSeries(f, lf, s)
   end
 
@@ -392,12 +392,6 @@ mutable struct RootCtxSingle{T}
   R::T  # the root
   o::T  # inv(f'(R)) for the double lifting.
 
-  function RootCtxSingle(f::PolyRingElem{S}, K::fqPolyRepField) where {S <: SeriesElem}
-    #not used I think
-    RR,  = power_series_ring(K, max_precision(R), var(R), cached = false) #can't get the model
-    return RootCtxSingle(f, RR)
-  end
-
   function RootCtxSingle(f::PolyRingElem{<:SeriesElem{T}}, r::T) where {T}
     R = base_ring(parent(f))
     k, mk = residue_field(R)
@@ -472,7 +466,7 @@ function symbolic_roots(f::ZZMPolyRingElem, r::ZZRingElem, pr::Int = 10; max_roo
   g = evaluate(f, [Hecke.Globals.Zx(r), gen(Hecke.Globals.Zx)])
   @assert is_squarefree(g)
   lg = factor(g)
-  rt = reduce(vcat, [Hecke.roots(number_field(x)[1], x) for x = keys(lg.fac)])
+  rt = reduce(vcat, [Hecke.roots(number_field(x)[1], x) for (x, _) = lg])
   rt = rt[1:min(length(rt), max_roots)]
   RT = []
   for i = 1:length(rt)
@@ -593,11 +587,11 @@ function roots(f::QQMPolyRingElem, p_max::Int=2^15; pr::Int = 2)
   while true
     p_max = next_prime(p_max)
     gp = factor(Native.GF(p_max, cached = false), g)
-    if any(x->x>1, values(gp.fac))
+    if any(x > 1 for (_, x) in gp)
       @vprintln :AbsFact 1 "not squarefree mod $p_max"
       continue
     end
-    e = lcm([degree(x) for x = keys(gp.fac)])
+    e = lcm([degree(x) for (x, _) = gp])
     if e < d
       d = e
       best_p = p_max
@@ -1123,7 +1117,7 @@ function absolute_bivariate_factorisation(f::QQMPolyRingElem)
   x, y = gens(R)
 
   lf = factor(f)
-  if length(lf.fac) > 1 || any(x->x>1, values(lf.fac))
+  if length(lf) > 1 || any(x>1 for (_, x) in lf)
     error("poly must be irreducible over Q")
   end
 
@@ -1307,8 +1301,8 @@ function absolute_multivariate_factorisation(a::QQMPolyRingElem)
   R = parent(a)
   K = base_ring(R)
 
-  alphas = zeros(ZZ, nvars(R))
-  bi_sub = zeros(Qxy, nvars(R))
+  alphas = [zero(ZZ) for _ in 1:nvars(R)]
+  bi_sub = [zero(Qxy) for _ in 1:nvars(R)]
 
   @assert length(a) > 0
 
@@ -1336,7 +1330,7 @@ function absolute_multivariate_factorisation(a::QQMPolyRingElem)
     # linear is irreducible by assumption
     return (unit, [a, parent(a)(1)])
   elseif length(vars) == 1
-    uni_sub = zeros(Hecke.Globals.Qx, nvars(R))
+    uni_sub = [zero(Hecke.Globals.Qx) for _ in 1:nvars(R)]
     uni_sub[vars[1]] = gen(Hecke.Globals.Qx)
     K1, alpha = number_field(evaluate(a, uni_sub), cached = false)
     R1 = polynomial_ring(K1, map(string, symbols(R)), internal_ordering = internal_ordering(R), cached = false)[1]
@@ -1425,7 +1419,7 @@ function absolute_multivariate_factorisation(a::QQMPolyRingElem)
   A = map_coefficients(K1, a, parent = R1)
   lcAf = Fac{elem_type(R1)}()
   lcAf.unit = map_coefficients(K1, lcaf.unit, parent = R1)
-  for i in lcaf.fac
+  for i in lcaf
     lcAf[map_coefficients(K1, i[1], parent = R1)] = i[2]
   end
 

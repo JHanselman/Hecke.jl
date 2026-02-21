@@ -15,6 +15,22 @@ base_ring_type(::Type{MatAlgebra{T, S}}) where {T, S} = parent_type(T)
 coefficient_ring(A::MatAlgebra{T, S}) where {T, S} = A.coefficient_ring::base_ring_type(S)
 
 function basis(A::MatAlgebra; copy::Bool = true)
+  if !isdefined(A, :basis)
+    @assert A.canonical_basis == 1
+    n = _matdeg(A)
+    n2 = n^2
+    R = base_ring(A)
+    B = Vector{elem_type(A)}(undef, n2)
+    for i = 1:n
+      ni = n*(i - 1)
+      for j = 1:n
+        M = zero_matrix(R, n, n)
+        M[j, i] = one(R)
+        B[ni + j] = A(M, check = false)
+      end
+    end
+    A.basis = B
+  end
   if copy
     return Base.copy(A.basis::Vector{elem_type(A)})
   else
@@ -206,7 +222,8 @@ function assure_has_multiplication_table(A::MatAlgebra{T, S}) where { T, S }
   B = basis(A)
   for i in 1:d
     for j in 1:d
-      mt[i, j, :] = coefficients(B[i] * B[j], copy = false)
+      mt[i, j, :] = coeffs_of_product(matrix(B[i]; copy = false),
+                                      matrix(B[j]; copy = false), A)
     end
   end
   A.mult_table = mt
@@ -264,16 +281,6 @@ function matrix_algebra(R::Ring, n::Int)
   n2 = n^2
   A.dim = n2
   A.degree = n
-  B = Vector{elem_type(A)}(undef, n2)
-  for i = 1:n
-    ni = n*(i - 1)
-    for j = 1:n
-      M = zero_matrix(R, n, n)
-      M[j, i] = one(R)
-      B[ni + j] = A(M, check = false)
-    end
-  end
-  A.basis = B
   A.one = identity_matrix(R, n)
   A.canonical_basis = 1
   A.is_simple = 1
@@ -556,12 +563,46 @@ function _matrix_in_algebra(M::S, A::MatAlgebra{T, S}) where {T, S<:MatElem}
   return t*U
 end
 
+#used in mult_table which is used for center computation
+# only compute the entries of M*N that are needed to get the coefficients
+# ie. only the entries with pivot indices.
+# if dim(A) << size(M) this is much faster
+#  cost: dim(A) * nrows(M)^2
+# vs
+#  nrows(M)^omega (3 in reality here)
+function coeffs_of_product(M::S, N::S, A::MatAlgebra{T, S}) where {T, S<:MatElem}
+  @assert size(M) == (_matdeg(A), _matdeg(A))
+  @assert size(N) == (_matdeg(A), _matdeg(A))
+  if nrows(M)^2/4 < dim(A) #need too many coeffs, so do it naively
+    return _matrix_in_algebra(M*N, A)
+  end
+  _, U, pivots = basis_matrix_rref(A)
+
+  tmp = zero_matrix(base_ring(A), 1, 1)
+  if coefficient_ring(A) == base_ring(A)
+    ind = CartesianIndices(axes(M))
+    t = [mul!(tmp, view(M, I[1]:I[1], :), view(N, :, I[2]:I[2]))[1,1] for I in ind[pivots]] # = M[ind[pivots]] if it were supported
+  else
+    ind = CartesianIndices((dim_of_coefficient_ring(A), axes(M)...))[pivots]
+    t = elem_type(base_ring(U))[]
+    d = Dict{Tuple{Int, Int}, typeof(t)}()
+    for I = ind
+      if !haskey(d, (I[2], I[3]))
+        d[(I[2], I[3])] = coefficients(mul!(tmp, view(M, I[1]:I[1], :), view(N, :, I[2]:I[2]))[1,1])
+      end
+      push!(t, d[(I[2], I[3])][I[1]])
+    end
+  end
+  return t*U
+end
+
+
 function _check_matrix_in_algebra(M::S, A::MatAlgebra{T, S}, ::Val{short} = Val(false)) where {S, T, short}
   if nrows(M) != _matdeg(A) || ncols(M) != _matdeg(A)
     if short
       return false
     end
-    return false, zeros(base_ring(A), dim(A))
+    return false, zeros_array(base_ring(A), dim(A))
   end
 
   d2 = _matdeg(A)^2
@@ -720,4 +761,28 @@ end
   BAt = [transpose(matrix(a, copy = false)) for a in BA]
   Aop = matrix_algebra(coefficient_ring(A), BAt, isbasis = true)
   return Aop, hom(A, Aop, identity_matrix(K, d), identity_matrix(K, d))
+end
+
+################################################################################
+#
+#  Iteration interface
+#
+################################################################################
+
+Base.eltype(::Type{A}) where {A<:MatAlgebra} = elem_type(A)
+
+Base.length(A::MatAlgebra) = BigInt(length(base_ring(A)))^(_matdeg(A)^2)
+
+function Base.iterate(A::MatAlgebra)
+  M = matrix_space(base_ring(A), _matdeg(A), _matdeg(A))
+  a_st = iterate(M)
+  a_st === nothing && return nothing
+  return A(first(a_st)), (M, last(a_st))
+end
+
+function Base.iterate(A::MatAlgebra, state)
+  # state[1] is the matrix space
+  a_st = iterate(state[1], state[2])
+  a_st === nothing && return nothing
+  return A(first(a_st)), (state[1], last(a_st))
 end

@@ -5,6 +5,8 @@ Returns the algebra containing $a$.
 """
 algebra(a::AbsAlgAssIdl) = a.algebra
 
+base_ring(I::AbsAlgAssIdl) = algebra(I)
+
 iszero(a::AbsAlgAssIdl) = (a.iszero == 1)
 
 @doc raw"""
@@ -13,6 +15,8 @@ iszero(a::AbsAlgAssIdl) = (a.iszero == 1)
 Return the vector space dimension an ideal.
 """
 dim(a::AbsAlgAssIdl) = nrows(basis_matrix(a, copy = false))
+
+ideal_type(::Type{S}) where {S <: AbstractAssociativeAlgebra} = AbsAlgAssIdl{S}
 
 ###############################################################################
 #
@@ -472,7 +476,7 @@ function quo(A::S, a::AbsAlgAssIdl{S}) where {S}
 
   # Lift a basis of the quotient to A
   quotient_basis = Vector{elem_type(A)}(undef, n)
-  b = elem_type(K)[zero(K) for i in 1:n]
+  b = zeros_array(K, n)
   for i = 1:n
     b[i] = oneK
     bN = b*N
@@ -482,7 +486,7 @@ function quo(A::S, a::AbsAlgAssIdl{S}) where {S}
 
   # Build the multiplication table
   t = A()
-  s = elem_type(K)[zero(K) for i in d]
+  s = zeros_array(K, d)
   mult_table = Array{elem_type(K), 3}(undef, n, n, n)
   for i in 1:n
     for j in 1:n
@@ -543,7 +547,7 @@ function quo(a::AbsAlgAssIdl{S}, b::AbsAlgAssIdl{S}) where {S}
 
   # Lift a basis of the quotient to A
   quotient_basis = Vector{elem_type(A)}(undef, n)
-  b = [zero(K) for i in 1:n]
+  b = zeros_array(K, n)
   for i = 1:n
     b[i] = one(K)
     bM = b*M
@@ -766,7 +770,7 @@ function maximal_ideals(A::MatAlgebra{<:FinFieldElem, <:Any}; side::Symbol)
   @req dim(A) == _matdeg(A)^2 "Must be a full matrix algebra"
   res = AbsAlgAssIdl{typeof(A)}[]
   if side == :left
-    zrow = [zero(F) for i in 1:n]
+    zrow = zeros_array(F, n)
     t = zero_matrix(F, n, n)
     for M in maximal_subspaces(F, n)
       bas = elem_type(A)[]
@@ -785,7 +789,7 @@ function maximal_ideals(A::MatAlgebra{<:FinFieldElem, <:Any}; side::Symbol)
     return res
   else
     @req side == :right "Side (:$(side)) must be :left or :right."
-    zcol = [zero(F) for i in 1:n]
+    zcol = zeros_array(F, n)
     t = zero_matrix(F, n, n)
     for M in maximal_subspaces(F, n)
       bas = elem_type(A)[]
@@ -803,4 +807,26 @@ function maximal_ideals(A::MatAlgebra{<:FinFieldElem, <:Any}; side::Symbol)
     @assert length(res) == divexact(q^n - 1, q - 1)
     return res
   end
+end
+
+################################################################################
+#
+#  Prime ideals
+#
+################################################################################
+
+# We could in fact first factor out the Jacobson (= Brown--McCoy since f.d.
+# k-algebra) radical and then determine the maximal submodules.
+function prime_ideals(A::AbstractAssociativeAlgebra)
+  if !is_finite(base_ring(A))
+    throw(NotImplemented)
+  end
+  @vtime :AlgAssOrd 1 lg = gens(A)
+  l = length(lg)
+  K = base_ring(A)
+  lM = dense_matrix_type(K)[ representation_matrix(lg[i]) for i = 1:l]
+  append!(lM, dense_matrix_type(K)[ representation_matrix(lg[i], :right) for i = 1:l])
+  M = Amodule(lM)
+  ls = maximal_submodules(M)
+  return ideal_type(A)[_ideal_from_matrix(A, B; side = :twosided) for B in ls]
 end

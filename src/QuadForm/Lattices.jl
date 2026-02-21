@@ -735,9 +735,9 @@ scale(L::AbstractLat)
 Return the rescaled lattice $L^a$. Note that this has a different ambient
 space than the lattice `L`.
 """
-rescale(::AbstractLat, ::NumFieldElem)
+rescale(::AbstractLat, ::NumFieldElem; cached=true)
 
-Base.:(^)(L::AbstractLat, a::RingElement) = rescale(L, a)
+Base.:(^)(L::AbstractLat, a::RingElement) = rescale(L, a; cached=false)
 
 ################################################################################
 #
@@ -1075,13 +1075,15 @@ the map of change of scalars associated to the underlying trace construction.
 """
 function trace_lattice_with_isometry_and_transfer_data(H::AbstractLat{T}; alpha::FieldElem = one(base_field(H)),
                                                                           beta::FieldElem = gen(base_field(H)),
-                                                                          order::Integer = 2) where T
+                                                                          order::Integer = 2, check::Bool=true) where T
   E = base_field(H)
 
   # We only consider full rank lattices for simplicity
   @req degree(H) == rank(H) "Lattice must be of full rank"
   @req parent(beta) === E "beta must be an element of the base algebra of H"
-  @req (beta == QQ(1) || norm(beta) == 1) "beta must be of norm 1"
+  if check
+    @req (beta == QQ(1) || norm(beta) == 1) "beta must be of norm 1"
+  end
   @req !is_zero(alpha) "alpha must be non zero"
 
   n = degree(H)
@@ -1098,7 +1100,7 @@ function trace_lattice_with_isometry_and_transfer_data(H::AbstractLat{T}; alpha:
   end
 
   @req H isa HermLat "H must be hermitian or defined over the integers"
-  @req maximal_order(E) == equation_order(E) "Equation order and maximal order must coincide"
+  #@req maximal_order(E) == equation_order(E) "Equation order and maximal order must coincide"
 
   # This function perform the trace construction on the level of the
   # ambient spaces - we just need to transport the lattice
@@ -1269,13 +1271,14 @@ function hermitian_structure_with_transfer_data(_L::ZZLat, f::QQMatrix; check::B
 
   n = multiplicative_order(f)
 
-  n2 = degree(minpoly(f))
+  mpf = minpoly(f)
+  n2 = degree(mpf)
 
   @req !is_finite(n) || n > 2 "Isometry must have infinite order or order bigger than 2"
 
   if check
     gram = gram_matrix(ambient_space(L))
-    @req is_irreducible(minpoly(f)) "The minimal polynomial of f must be irreducible"
+    @req is_irreducible(mpf) "The minimal polynomial of f must be irreducible"
     @req f*gram*transpose(f) == gram "f does not define an isometry of the space of L"
     @req is_divisible_by(rank(L), n2) "The degree of the minimal polynomial of f must divide the rank of L"
   end
@@ -1286,9 +1289,9 @@ function hermitian_structure_with_transfer_data(_L::ZZLat, f::QQMatrix; check::B
     b = gen(base_ring(codomain(res)))
   elseif E === nothing
     if is_finite(n)
-      E, b = cyclotomic_field_as_cm_extension(n)
+      E, b = cyclotomic_field_as_cm_extension(n; cached=false)
     else
-      Etemp, btemp = number_field(minpoly(f))
+      Etemp, btemp = number_field(mpf)
       K, a = number_field(minpoly(btemp + inv(btemp)), "a"; cached=false)
       Kt, t = K["t"]
       E, b = number_field(t^2-a*t+1, "b"; cached=false)
@@ -1327,7 +1330,7 @@ function hermitian_structure_with_transfer_data(_L::ZZLat, f::QQMatrix; check::B
   # we use the transfer formula to revert the trace construction (this is
   # where we actually need a basis on which the isometry is given by multiplication
   # by `b`.
-  gram = matrix(zeros(E, m, m))
+  gram = zero_matrix(E, m, m)
   s = involution(E)
   G = l*gram_matrix(ambient_space(L))*transpose(l)
   bs = absolute_basis(E)
@@ -1348,7 +1351,7 @@ function hermitian_structure_with_transfer_data(_L::ZZLat, f::QQMatrix; check::B
 
   @assert transpose(map_entries(s, gram)) == gram
 
-  W = hermitian_space(E, gram)
+  W = hermitian_space(E, gram; cached=false)
 
   # we create the map for extending/restricting scalars
   # considering our "nice" basis keeping track of the action of the isometry
@@ -1613,7 +1616,7 @@ Setting the parameters `depth` and `bacher_depth` to a positive value may improv
 performance. If set to `-1` (default), the used value of `depth` is chosen
 heuristically depending on the rank of `L`. By default, `bacher_depth` is set to `0`.
 """
-is_isometric(L::AbstractLat, M::AbstractLat; depth::Int = -1, bacher_depth::Int = 0) = is_isometric_with_isometry(L, M; ambient_representation=false, depth = depth, bacher_depth = bacher_depth)[1]
+is_isometric(L::AbstractLat, M::AbstractLat; depth::Int = -1, bacher_depth::Int = 0) = is_isometric_with_isometry(L, M; depth = depth, bacher_depth = bacher_depth)[1]
 
 
 @doc raw"""
@@ -1624,23 +1627,20 @@ is_isometric(L::AbstractLat, M::AbstractLat; depth::Int = -1, bacher_depth::Int 
 Return whether the lattices `L` and `M` are isometric. If this is the case, the
 second returned value is an isometry `T` from `L` to `M`.
 
-By default, that isometry is represented with respect to the bases of the
-ambient spaces, that is, $T V_M T^t = V_L$ where $V_L$ and $V_M$ are the Gram
-matrices of the ambient spaces of `L` and `M` respectively. If
-`ambient_representation == false`, then the isometry is represented with respect
-to the (pseudo-)bases of `L` and `M`, that is, $T G_M T^t = G_L$ where $G_M$
-and $G_L$ are the Gram matrices of the (pseudo-)bases of `L` and `M`
+The isometry is represented with respect to the (pseudo-)bases of `L` and `M`,
+that is, $T G_M T^t = G_L$ where $G_M$ and $G_L$ are the Gram matrices of the
+(pseudo-)bases of `L` and `M`
 respectively.
 
 Setting the parameters `depth` and `bacher_depth` to a positive value may improve
 performance. If set to `-1` (default), the used value of `depth` is chosen
 heuristically depending on the rank of `L`. By default, `bacher_depth` is set to `0`.
 """
-is_isometric_with_isometry(L::AbstractLat, M::AbstractLat; ambient_representation::Bool = true, depth::Int = -1, bacher_depth::Int = 0) = throw(NotImplemented())
+is_isometric_with_isometry(L::AbstractLat, M::AbstractLat; depth::Int = -1, bacher_depth::Int = 0) = throw(NotImplemented())
 
 
 function is_isometric_with_isometry(L::AbstractLat{<: NumField}, M::AbstractLat{<: NumField};
-                                            ambient_representation::Bool = true, depth::Int = -1, bacher_depth::Int = 0)
+                                    depth::Int = -1, bacher_depth::Int = 0)
   V = ambient_space(L)
   W = ambient_space(M)
   E = base_ring(V)
@@ -1692,21 +1692,7 @@ function is_isometric_with_isometry(L::AbstractLat{<: NumField}, M::AbstractLat{
     @hassert :Lattice 1 T * gram_matrix(rational_span(M)) *
                             _map(transpose(T), involution(L)) ==
                                 gram_matrix(rational_span(L))
-    if !ambient_representation
-      return true, T
-    else
-      BL = basis_matrix_of_rational_span(L)
-      BL = vcat(orthogonal_complement(ambient_space(L), BL), BL)
-      BM = basis_matrix_of_rational_span(M)
-      BM = vcat(orthogonal_complement(ambient_space(M), BM), BM)
-      T = block_diagonal_matrix([identity_matrix(base_field(L), degree(L)-rank(L)), T])
-      T = inv(BL)*T*BM
-
-      @hassert :Lattice 1 T * gram_matrix(ambient_space(M)) *
-                              _map(transpose(T), involution(L)) ==
-                                  gram_matrix(ambient_space(L))
-      return true, T
-    end
+    return true, T
   else
     return false, zero_matrix(E, 0, 0)
   end
@@ -1848,41 +1834,51 @@ end
     direct_sum(x::Vector{T}) where T <: AbstractLat -> T, Vector{AbstractSpaceMor}
 
 Given a collection of quadratic or hermitian lattices $L_1, \ldots, L_n$,
-return their direct sum $L := L_1 \oplus \ldots \oplus L_n$, together with
-the injections $L_i \to L$ (seen as maps between the corresponding ambient spaces).
+return their direct sum $L := L_1 \oplus \ldots \oplus L_n$ as modules, together
+with the injections $L_i \to L$ (seen as maps between the corresponding
+ambient spaces).
 
-For objects of type `AbstractLat`, finite direct sums and finite direct
-products agree and they are therefore called biproducts.
+For modules, finite direct sums and finite direct products agree and they are
+therefore called biproducts.
 If one wants to obtain `L` as a direct product with the projections $L \to L_i$,
 one should call `direct_product(x)`.
 If one wants to obtain `L` as a biproduct with the injections $L_i \to L$ and the
 projections $L \to L_i$, one should call `biproduct(x)`.
+
+!!! warning
+    The projections $L\to L_i$ are morphisms of modules but not of lattices,
+    since the associated quadratic/hermitian forms are not preserved.
 """
-function direct_sum(x::Vector{T}) where T <: AbstractLat
-  W, inj = direct_sum(ambient_space.(x))
+function direct_sum(x::Vector{T};cached::Bool=true) where T <: AbstractLat
+  W, inj = direct_sum(ambient_space.(x); cached)
   H = _biproduct(x)
   return lattice(W, H), inj
 end
 
-direct_sum(x::Vararg{AbstractLat}) = direct_sum(collect(x))
+direct_sum(x::Vararg{AbstractLat};cached::Bool=true) = direct_sum(collect(x);cached)
 
 @doc raw"""
     direct_product(x::Vararg{T}) where T <: AbstractLat -> T, Vector{AbstractSpaceMor}
     direct_product(x::Vector{T}) where T <: AbstractLat -> T, Vector{AbstractSpaceMor}
 
 Given a collection of quadratic or hermitian lattices $L_1, \ldots, L_n$,
-return their direct product $L := L_1 \times \ldots \times L_n$, together with
-the projections $L \to L_i$ (seen as maps between the corresponding ambient spaces).
+return their direct product $L := L_1 \times \ldots \times L_n$ as modules, together
+with the projections $L \to L_i$ (seen as maps between the corresponding
+ambient spaces).
 
-For objects of type `AbstractLat`, finite direct sums and finite direct
-products agree and they are therefore called biproducts.
+For modules, finite direct sums and finite direct products agree and they are
+therefore called biproducts.
 If one wants to obtain `L` as a direct sum with the injections $L_i \to L$,
 one should call `direct_sum(x)`.
 If one wants to obtain `L` as a biproduct with the injections $L_i \to L$ and the
 projections $L \to L_i$, one should call `biproduct(x)`.
+
+!!! warning
+    The projections $L\to L_i$ are morphisms of modules but not of lattices,
+    since the associated quadratic/hermitian forms are not preserved.
 """
-function direct_product(x::Vector{T}) where T <: AbstractLat
-  W, proj = direct_product(ambient_space.(x))
+function direct_product(x::Vector{T};cached::Bool=true) where T <: AbstractLat
+  W, proj = direct_product(ambient_space.(x); cached)
   H = _biproduct(x)
   return lattice(W, H), proj
 end
@@ -1894,24 +1890,28 @@ direct_product(x::Vararg{AbstractLat}) = direct_product(collect(x))
     biproduct(x::Vector{T}) where T <: AbstractLat -> T, Vector{AbstractSpaceMor}, Vector{AbstractSpaceMor}
 
 Given a collection of quadratic or hermitian lattices $L_1, \ldots, L_n$,
-return their biproduct $L := L_1 \oplus \ldots \oplus L_n$, together with
-the injections $L_i \to L$ and the projections $L \to L_i$ (seen as maps
+return their biproduct $L := L_1 \oplus \ldots \oplus L_n$ as modules, together
+with the injections $L_i \to L$ and the projections $L \to L_i$ (seen as maps
 between the corresponding ambient spaces).
 
-For objects of type `AbstractLat`, finite direct sums and finite direct
-products agree and they are therefore called biproducts.
+For modules, finite direct sums and finite direct products agree and they are
+therefore called biproducts.
 If one wants to obtain `L` as a direct sum with the injections $L_i \to L$,
 one should call `direct_sum(x)`.
 If one wants to obtain `L` as a direct product with the projections $L \to L_i$,
 one should call `direct_product(x)`.
+
+!!! warning
+    The projections $L\to L_i$ are morphisms of modules but not of lattices,
+    since the associated quadratic/hermitian forms are not preserved.
 """
-function biproduct(x::Vector{T}) where T <: AbstractLat
-  W, inj, proj = biproduct(ambient_space.(x))
+function biproduct(x::Vector{T}; cached::Bool=true) where T <: AbstractLat
+  W, inj, proj = biproduct(ambient_space.(x); cached)
   H = _biproduct(x)
   return lattice(W, H), inj, proj
 end
 
-biproduct(x::Vararg{AbstractLat}) = biproduct(collect(x))
+biproduct(x::Vararg{AbstractLat}; cached::Bool=true) = biproduct(collect(x);cached)
 
 function _biproduct(x::Vector{T}) where T <: AbstractLat
   px = pseudo_matrix.(x)

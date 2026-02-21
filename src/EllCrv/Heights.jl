@@ -648,9 +648,11 @@ end
     CPS_height_bounds(E::EllipticCurve) -> ArbFieldElem, ArbFieldElem
 
 Given an elliptic curve over a number field or rational field, return a tuple
-`a, b` giving bounds for the difference between the naive and the canonical
-height of an elliptic curve E. We have `a <= naive_height(P) -
-canonical_height(P) <= b` for all rational points `P` of `E`.
+`(a, b)` giving bounds for the difference between the naive and the canonical
+height of an elliptic curve E.
+
+We have `a <= naive_height(P) - canonical_height(P) <= b` for all rational
+points `P` of `E`.
 """
 function CPS_height_bounds(E::EllipticCurve{T}) where T<:Union{QQFieldElem, AbsSimpleNumFieldElem}
   # This is just a working precision
@@ -796,15 +798,25 @@ function CPS_dvev_complex(E::EllipticCurve{T}, v::V, prec::Int = 100) where T wh
   F = b6*x^4 + 2*b4*x^3 + b2*x^2 + 4*x
   G = -b8*x^4 - 2*b6*x^3 - b4*x^2 + 1
 
-  E_fg = function (u::AcbFieldElem, eta::ArbFieldElem)
-    fsum = sum([eta^i//factorial(i)*abs(derivative(f, i)(u)) for i in (1:3)])
-    gsum = sum([eta^i//factorial(i)*abs(derivative(g, i)(u)) for i in (1:4)])
+  function taylor(pol::PolyRingElem, u::AcbFieldElem, eta::ArbFieldElem)
+    s = zero(eta)
+    d = degree(pol)
+    for i in 1:d
+      pol = derivative(pol)
+      s += eta^i//factorial(i)*abs(pol(u))
+    end
+    return s
+  end
+
+  function E_fg(u::AcbFieldElem, eta::ArbFieldElem)
+    fsum = taylor(f, u, eta)
+    gsum = taylor(g, u, eta)
     return max(fsum, gsum)
   end
 
-  E_FG = function (u::AcbFieldElem, eta::ArbFieldElem)
-    Fsum = sum([eta^i//factorial(i)*abs(derivative(F, i)(u)) for i in (1:4)])
-    Gsum = sum([eta^i//factorial(i)*abs(derivative(G, i)(u)) for i in (1:4)])
+  function E_FG(u::AcbFieldElem, eta::ArbFieldElem)
+    Fsum = taylor(F, u, eta)
+    Gsum = taylor(G, u, eta)
     return max(Fsum, Gsum)
   end
 

@@ -86,6 +86,7 @@
   @test hermitian_lattice(E1; gram = gram_matrix(g)) in g
   d = @inferred det_representative(g)
   @test is_local_norm(E1, K(det(gram_matrix(g))) * inv(d), p)
+  @test norm(Hecke.max_scale(g)) == prime(g)^2
 
   # negative scale
   g = @inferred genus(HermLat, E1, p, [(-2, 1, 1, -1), (2, 2, -1, 1)], type = :disc)
@@ -580,6 +581,9 @@ end
     @test prod([fractional_ideal(prime(g))^(sum([rank(g,i)*scale(g,i) for i in 1:length(g)])) for g in G.LGS]) == inv(135*maximal_order(base_field(E)))
   end
 
+  gh = hermitian_genera(E, 8, sig; min_scale = E(1)*maximal_order(E), max_scale = E(1)*maximal_order(E))
+  @test length(gh)==2
+
   @test_throws ArgumentError hermitian_genera(E, -1, sig, DE)
   @test_throws ArgumentError hermitian_genera(E, 1, sig, DE, min_scale = 0*DE)
   @test_throws ArgumentError hermitian_genera(E, 1, sig, DE, max_scale = 0*DE)
@@ -601,7 +605,7 @@ end
   OK = maximal_order(K);
   ps = AbsNumFieldOrderIdeal{AbsSimpleNumField, AbsSimpleNumFieldElem}[ideal(OK, v) for v in Vector{AbsSimpleNumFieldOrderElem}[map(OK, [2, 6*a^4 + 4*a^3 - 6*a^2 - 2*a + 2]), map(OK, [13, a + 11])]];
   datas = [[(0, 2, 1)], [(-11, 2, 1)]];
-  lgs = Hecke.HermLocalGenus{typeof(E), AbsNumFieldOrderIdeal{AbsSimpleNumField, AbsSimpleNumFieldElem}}[genus(HermLat, E, ps[i], datas[i]) for i in 1:2];
+  lgs = Hecke.local_genus_herm_type(E)[genus(HermLat, E, ps[i], datas[i]) for i in 1:2];
   G = Hecke.HermGenus(E, 2, lgs, sig)
   h = Hecke._hermitian_form_with_invariants(E, 2, Hecke._non_norm_primes(local_symbols(G)), sig)
   L = lattice(hermitian_space(E, h))
