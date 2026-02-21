@@ -233,6 +233,7 @@ export composition_factors_with_multiplicity
 export composition_series
 export compositum
 export conductor
+export conic_curve
 export conj
 export conjugacy_classes
 export conjugate
@@ -348,6 +349,7 @@ export factor_coprime
 export faltings_height
 export farey_lift
 export find_points
+export find_rational_point
 export finite_divisor
 export finite_maximal_order
 export finite_ring
@@ -744,6 +746,7 @@ export orthogonal_submodule
 export overlattice
 export overlattices
 export overorders
+export parametrization
 export parent
 export periods
 export permute_row
@@ -820,6 +823,8 @@ export ray_class_group
 export real_embeddings
 export real_period
 export real_places
+export reconstruct_from_igusa
+export reduce_binary_form
 export reduce_full
 export reduce_binary_form
 export reduced_charpoly

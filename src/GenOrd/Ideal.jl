@@ -668,11 +668,19 @@ end
 
 function prime_decomposition(O::GenOrd, p::RingElem, degree_limit::Int = degree(O), lower_limit::Int = 0; cached::Bool = true)
   #Index not well-defined for infinite maximal order
-  if !isa(base_ring(O), KInftyRing) && !(divides(index(O), p)[1])
+  if !isa(base_ring(O), KInftyRing) && is_defining_polynomial_nice(function_field(O)) && !(divides(index(O), p)[1]) 
     return prime_dec_nonindex(O, p, degree_limit, lower_limit)
   else
     return prime_dec_gen(O, p, degree_limit, lower_limit)
   end
+end
+
+function is_defining_polynomial_nice(F::AbstractAlgebra.Generic.FunctionField)
+  pol = F.pol
+  if !isone(leading_coefficient(pol))
+    return false
+  end
+  return true
 end
 
 function prime_dec_gen(O::GenOrd, p::RingElem, degree_limit::Int = degree(O), lower_limit::Int = 0)

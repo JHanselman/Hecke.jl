@@ -138,6 +138,13 @@ function transform_ys(P::Tuple{QQFieldElem, QQFieldElem, QQFieldElem}, h::QQPoly
   return (P[1], (P[2] - evaluate(h, P[1]))//2, one(QQ))
 end
 
+function transform_ys(P::Tuple{QQFieldElem, QQFieldElem, QQFieldElem}, h::QQPolyRingElem)
+  if P[3]== 0
+    return (zero(QQ), one(QQ), zero(QQ))
+  end
+  return (P[1], (P[2] - evaluate(h, P[1]))//2, 1)
+end
+
 function _find_points(coefficients::Vector, bound::Union{Integer, ZZRingElem}, N = 2^14, P = 40, Pfirst = 30)
 
   #N is size of chunks in which we subdivide

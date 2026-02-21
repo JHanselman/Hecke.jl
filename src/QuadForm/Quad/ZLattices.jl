@@ -2172,12 +2172,12 @@ function _lll(
   elseif (nrows(M) == 3) && (abs(det(M)) == 1)
     G2, U = lll_gram_indef_ternary_hyperbolic(M)
   elseif det(M) == 1
-    G2, U = lll_gram_indef_with_transform(M)
+    G2, U = _with_transform(M)
   else
     # In the modular case, one may perform another LLL-reduction to obtain
     # a better output
-    G21, U21 = lll_gram_indef_with_transform(M)
-    G2, U2 = lll_gram_indef_with_transform(G21)
+    G21, U21 = _with_transform(M)
+    G2, U2 = _with_transform(G21)
     U = U2*U21
   end
   return G2, U
