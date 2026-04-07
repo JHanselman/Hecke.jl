@@ -415,9 +415,9 @@ end
 function Hecke.minimum(A::GenOrdIdl; copy::Bool = true)
   assure_has_minimum(A)
   if copy
-    return deepcopy(A.minimum)
+    return deepcopy(A.minimum)::elem_type(base_ring(order(A)))
   else
-    return A.minimum
+    return A.minimum::elem_type(base_ring(order(A)))
   end
 end
 
@@ -507,9 +507,9 @@ $\mathcal O$ is the order of $A$.
 function Hecke.norm(A::GenOrdIdl; copy::Bool = true)
   assure_has_norm(A)
   if copy
-    return deepcopy(A.norm)
+    return deepcopy(A.norm)::elem_type(base_ring(order(A)))
   else
-    return A.norm
+    return A.norm::elem_type(base_ring(order(A)))
   end
 end
 
@@ -591,11 +591,7 @@ end
 ################################################################################
 
 function Hecke.index(O::GenOrd)
-  index = O.R(1)
-  if isdefined(O, :itrans)
-    index = O.R(det(O.itrans))
-  end
-  return index
+  return is_equation_order(O) ? O.R(1) : O.R(det(basis_matrix_inverse(O)))
 end
 
 function prime_dec_nonindex(O::GenOrd, p::PolyRingElem, degree_limit::Int = 0, lower_limit::Int = 0)
