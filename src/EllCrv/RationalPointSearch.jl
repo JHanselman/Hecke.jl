@@ -131,12 +131,6 @@ function transform_ys(P::Tuple{QQFieldElem, QQFieldElem, QQFieldElem}, a1::QQFie
   return (P[1], (P[2] - a1*P[1] - a3)//2, one(QQ))
 end
 
-function transform_ys(P::Tuple{QQFieldElem, QQFieldElem, QQFieldElem}, h::QQPolyRingElem)
-  if P[3]== 0
-    return (zero(QQ), one(QQ), zero(QQ))
-  end
-  return (P[1], (P[2] - evaluate(h, P[1]))//2, one(QQ))
-end
 
 function transform_ys(P::Tuple{QQFieldElem, QQFieldElem, QQFieldElem}, h::QQPolyRingElem)
   if P[3]== 0

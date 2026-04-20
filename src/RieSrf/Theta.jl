@@ -14,7 +14,7 @@
 
 #This is an interface to the Theta code by Jean Kieffer and Noam Elkies
 
-export theta
+export theta, thetas_f
 
 function theta_f(z::Vector{AcbFieldElem},  tau::AcbMatrix, theta_characteristic::Int)
   g = nrows(tau)
