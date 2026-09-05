@@ -17,7 +17,8 @@ function integral_left_kernel(M::ArbMatrix)
 # Endomorphisms and polarizations have far smaller coefficients, 
 # so we could potentially work with lower precision
   n = nrows(M)
-  MJ = zero_matrix(ZZ, n, n)
+  m = ncols(M)
+  MJ = zero_matrix(ZZ, n, m)
   Hecke.round_scale!(MJ, M, b10_prec)
 
   k = number_of_rows(M)

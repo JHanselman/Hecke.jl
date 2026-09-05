@@ -22,6 +22,8 @@ approximate_minimal_polynomial, algebraize_element, complex_structure,
 rational_homomorphism_equations, geometric_endomorphism_representation, 
 geometric_endomorphism_representation
 
+export compute_bitangents, compute_tritangents, _split_in_blocks
+
 import Hecke.AbstractAlgebra, Hecke.Nemo
 import Hecke.AbstractAlgebra.is_terse
 import Hecke.IntegerUnion
@@ -45,4 +47,7 @@ include("RieSrf/AbelJacobiMap.jl")
 include("RieSrf/HeuristicEndomorphisms.jl")
 include("RieSrf/Algebraization.jl")
 include("RieSrf/EndomorphismStructure.jl")
+include("RieSrf/ReconstructCurves.jl")
+
+include("RieSrf/RiemannRelations.jl")
 end
