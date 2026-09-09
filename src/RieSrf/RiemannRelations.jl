@@ -3,7 +3,7 @@ using Hecke.RiemannSurfaces
 using GenericLinearAlgebra
 R, (x,y) = polynomial_ring(QQ, [:x,:y])
 f = 2*x^5*y^3 + 5*x^4*y^3 - 9*x^4*y^2 + 3*x^3*y - 4*x^2*y^2 - 3*x*y^3 + 1
-RS = riemann_surface(f, 300, integration_method = "heuristic")
+RS = riemann_surface(f, 500, integration_method = "heuristic")
 tau = small_period_matrix(RS)
 CC = complex_field(RS)
 z = zeros(CC, 5)
@@ -179,6 +179,10 @@ function odd_theta_relations(g, thetas)
   even_indices = char_to_index.(even_theta_characteristics(g))
   odd_indices = char_to_index.(odd_theta_characteristics(g))
   M_even = M[:, even_indices]
+
+  CC = parent(thetas[zeros(Int, 2*g)...])
+  prec = precision(CC)
+  setprecision(BigFloat, prec)
   M_even_float = Complex{BigFloat}.(collect(M_even))
   K = permutedims(nullspace(transpose(M_even_float)))
   M_float = Complex{BigFloat}.(collect(M))
