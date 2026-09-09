@@ -141,8 +141,8 @@ function theta_list(thetas, g)
 end
 
 function _construct_sparse_matrix(g, thetas)
-  rho = zeros(QQ, 2*g)
   CC = parent(thetas[zeros(Int, 2*g)...])
+  rho = zeros(QQ, 2*g)
 
   M = zero_matrix(CC, 2^(2*g), 2^(2*g));
   V = Iterators.product(repeat([[QQ(0),QQ(1//2)]], 2*g)...)
@@ -175,17 +175,7 @@ function odd_theta_relations(g, thetas)
 
   CC = parent(thetas[zeros(Int, 2*g)...])
   R, X = polynomial_ring(CC, 2^(2*g))
-  relations = zeros(R, nrows(K))
-
-  tol = 10^(-50)
-
-  for r in (1:10)#nrows(K))
-    rel_vec = transpose(K[r,:]) * M_float
-    for j in odd_indices
-      if abs(rel[j]) > tol
-        relations[r] += CC(rel[j]) * X[j]^2
-      end 
-    end 
-  end
-
+  return K*(M_float[:,odd_indices])
 end
+
+
