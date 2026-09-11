@@ -24,7 +24,8 @@ geometric_endomorphism_representation
 
 export compute_bitangents, compute_tritangents, _split_in_blocks
 
-export odd_theta_relations, _construct_sparse_matrix, char_to_index, even_theta_characteristics, odd_theta_characteristics, max_noether_relations
+export odd_theta_relations, _construct_sparse_matrix, char_to_index, even_theta_characteristics, odd_theta_characteristics, max_noether_relations,
+azygetic_system,azygetic_system_flip, aronhold_system, theta_list, theta_square_relations
 
 import Hecke.AbstractAlgebra, Hecke.Nemo
 import Hecke.AbstractAlgebra.is_terse
