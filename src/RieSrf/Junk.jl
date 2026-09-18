@@ -295,3 +295,52 @@ function map_azygetic(azy1, azy2)
    @req vec1 == vec2 "Mistake in map_orthogonal()"
 	return transpose(M1^(-1)*S1add1at3* ortho1*ortho2^(-1) *S2add1at3^(-1)*M2)
 end
+
+
+function arf_normal_form(char)
+  g = div(length(char1),2)
+  M = identity_matrix(GF(2), 2*g)
+  J = collect(1:g)
+  while length(J) != 0
+    j = popfirst!(J)
+    if char[j] == 0 && char[g+j] == 1
+      M[j, g+j] = 1
+  elseif char[j] == 1 && char[g+j] == 0
+      M[g+j, j] = 1
+  elseif char[j] == 1 && char[g+j] == 1
+    I = findall(i -> char[i] == 1 && char[i+g] == 1, J)
+    I[1] = k 
+    filter!(x -> x != k, J)
+
+    M[j, g + j] = 1
+    M[k, j] = 1
+    M[k, k] = 0
+    M[k, g+j] = 1
+    M[k, g+k] = 1
+    M[g+j, k] = 1
+    M[g+j, g+k] = 1
+    M[g+k, k] = 1
+  end
+
+  return M
+
+  end
+
+  char1_quad_form = quadratic_form_from_theta_char(char1)
+  char2_quad_form = quadratic_form_from_theta_char(char2)
+  
+
+
+
+
+
+end
+
+function quadratic_form_from_theta_char(char)
+  g = div(length(char1),2)
+	id = identity_matrix(GF(2), g)
+  zer = zero_matrix(GF(2), g, g)
+  diag = diagonal_matrix(GF(2), char)
+	J = [zer id ; zer zer]
+  return J + diag
+end 

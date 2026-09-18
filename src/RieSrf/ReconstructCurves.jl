@@ -592,7 +592,11 @@ function even_theta_characteristics(g::Int)
   return even_chars
 end
 
-function char_to_index(char)
+function char_to_index(char::Vector{QQFieldElem})
+  return char_to_index(map(x-> mod(x, 2), Int.(2*char)))
+end
+
+function char_to_index(char::Vector{Int})
   s = foldl((acc, x) -> (acc << 1) | x, char)
   if iszero(s)
     g = div(length(char), 2)
