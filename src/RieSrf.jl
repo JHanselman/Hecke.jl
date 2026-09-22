@@ -22,6 +22,12 @@ approximate_minimal_polynomial, algebraize_element, complex_structure,
 rational_homomorphism_equations, geometric_endomorphism_representation, 
 geometric_endomorphism_representation
 
+export odd_theta_relations, _construct_sparse_matrix, char_to_index, even_theta_characteristics, odd_theta_characteristics, max_noether_relations,
+azygetic_system,azygetic_system_flip, aronhold_system, theta_list, theta_square_relations, prym_thetas_sq, frobenius_fay_relation,
+half_char_inner_prod, naive_non_orth_complement, construct_fay_matrix, char_to_index, prym_thetas, signs_from_relations, pre_correct_signs,
+find_zero_sum_tetrads, find_fixed_even_chars, transform_to_arf_form, char_to_QF, apply_transformation_to_char, map_even_characteristic, max_noether_characteristics,
+relation_with_term
+
 import Hecke.AbstractAlgebra, Hecke.Nemo
 import Hecke.AbstractAlgebra.is_terse
 import Hecke.IntegerUnion
@@ -45,4 +51,7 @@ include("RieSrf/AbelJacobiMap.jl")
 include("RieSrf/HeuristicEndomorphisms.jl")
 include("RieSrf/Algebraization.jl")
 include("RieSrf/EndomorphismStructure.jl")
+include("RieSrf/ReconstructCurves.jl")
+include("RieSrf/ReconstructCurveAuxiliary.jl")
+include("RieSrf/RiemannRelations.jl")
 end
