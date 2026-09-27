@@ -16,105 +16,11 @@ export  is_terminated, branch, set_position, terminate, edge_level, isequal,
  get_position, set_label, get_label, PQ, get_subpaths, sheet_ordering, reverse, start_point,
 end_point
 
-###############################################################################
-#
-#  Edges for Tretkoff Algorithm
-#
-###############################################################################
-
-#The edges of the tree graph in the Tretkoff algorithm.
-# - Each edge has a start point and an end point.
-# - Each edge has a level. The first vertex has level 1. The odd levels
-#   correspond to ramification points and the even levels correspond to sheets.
-# - An edge is labeled terminated if the algorithm is done with this edge
-# - A branch of the graph is a sequence of edges that ends traces back to the
-#   starting vertex.
-# - In the algorithm the Tretkoff edges get sorted by the function
-#   compare_branches. The position variable gives the position of the
-#  terminated edges in this ordering
-# - For "even" edges the label gives the position in the list of ordered even
-#   edges. The "odd" edges have the same label as their even counterpart
-# (with start point and end point reversed).
-
-mutable struct TretkoffEdge
-  start_point::Int
-  end_point::Int
-  level::Int
-  terminated::Bool
-  branch::Vector{Int}
-  position::Int
-  label::Int
-
-  function TretkoffEdge(a::Int, b::Int, L::Int = 0,  B::Vector{Int} = [a, b], term::Bool = false)
-    TE = new()
-    TE.start_point = a
-    TE.end_point = b
-    TE.level = L
-    TE.terminated = term
-    TE.branch = B
-
-    return TE
-  end
-end
-
-function start_point(e::TretkoffEdge)
-  return e.start_point
-end
-
-function end_point(e::TretkoffEdge)
-  return e.end_point
-end
-
-function isequal(e1::TretkoffEdge, e2::TretkoffEdge)
-  return start_point(e1) == start_point(e2) && end_point(e1) == end_point(e2)
-end
-
-function edge_level(e::TretkoffEdge)
-  return e.level
-end
-
-function terminate(e::TretkoffEdge)
-  e.terminated = true
-end
-
-function is_terminated(e::TretkoffEdge)
-  return e.terminated
-end
-
-function branch(e::TretkoffEdge)
-  return e.branch
-end
-
-function set_position(e::TretkoffEdge, s::Int)
-  e.position = s
-end
-
-function get_position(e::TretkoffEdge)
-  return e.position
-end
-
-function PQ(e::TretkoffEdge)
-  return start_point(e) < end_point(e)
-end
-
-function reverse(e::TretkoffEdge)
-  return TretkoffEdge(end_point(e), start_point(e))
-end
-
-function set_label(e::TretkoffEdge,l::Int)
-  e.label = l
-end
-
-function get_label(e::TretkoffEdge)
-  return e.label
-end
-
 ################################################################################
 #
 #  Auxiliary functions for computation over the complex numbers
 #
 ################################################################################
-
 
 #Ensures that the output is between 0 and 2pi.
 function Base.mod2pi(x::ArbFieldElem)
@@ -128,13 +34,6 @@ function Base.mod2pi(x::ArbFieldElem)
   end
 
   return x
-end
-
-function mod2pi_i(x::AcbFieldElem)
-  CC = parent(x)
-  Re = real(x)
-  Im = imag(x)
-  return Re + mod2pi(Im)*onei(CC)
 end
 
 @doc raw"""
@@ -157,11 +56,6 @@ end
 Embed a polynomial into the polynomial ring over the complex numbers using the given place.
 """
 function embed_mpoly(f::MPolyRingElem, v::T, prec::Int = 100) where T<:Union{PosInf, InfPlc}
-  #=res = map_coefficients(x -> evaluate(x, v.embedding, prec), f)
-  CC = AcbField(prec)
-  CCx, x = polynomial_ring(CC, symbols(parent(f)))
-  res = map_coefficients(coefficient_ring(res), res; parent = CCx)
-  return res=#
   n = length(terms(f))
   R = coefficient_ring(f)
   CC = AcbField(prec)

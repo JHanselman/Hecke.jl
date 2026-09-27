@@ -4,55 +4,6 @@
 #
 ################################################################################
 
-#The class RiemannSurfaceDivisor represents a divisor on a Riemann surface
-
-mutable struct RiemannSurfaceDivisor
-
-  #The core data of the divisor is stored by two arrays:
-  #the points in the support and the corresponding multiplicities.
-  points::Vector{RiemannSurfacePoint}
-  mults::Vector{Int}
-
-  degree::Int
-  abel_jacobi_value::AcbMatrix
-  riemann_surface::RiemannSurface
-
-
-  function RiemannSurfaceDivisor(RS::RiemannSurface) 
-    D = new()
-    D.RiemannSurface = RS
-    D.degree = 0
-    D.points = RiemannSurfacePoint[]
-    D.mults = Int[]
-    return D
-  end
-
-  function RiemannSurfaceDivisor(S::Vector{RiemannSurfacePoint}, V::Vector{Int}) 
-    D = new()
-    number_of_points = length(S)
-    @req number_of_points == length(V) "Length of the array of points should match the array of multiplicities."
-    @req number_of_points >= 0 "Array of points should not be empty."
-
-    D.riemann_surface = parent(S[1])
-
-    D.degree = sum(V;init = 0)
-    D.points = RiemannSurfacePoint[]
-    D.mults = Int[]
-    for k in (1:number_of_points)
-      if V[k] != 0
-        i = findfirst(x -> x == S[k], D.points)
-        if i == nothing
-          push!(D.points, S[k])
-          push!(D.mults,V[k])
-        else
-          D.mults[i]+=V[k]
-        end
-      end
-    end
-    return D
-  end
-end
-
 @doc raw"""
 divisor(P::Vector{RiemannSurfacePoint}, n::Vector{Int}) -> RiemannSurfaceDivisor
 
@@ -63,9 +14,9 @@ function divisor(P::Vector{RiemannSurfacePoint}, n::Vector{Int})
   return RiemannSurfaceDivisor(P, n)
 end
 
-function zero_divisor(RS::RiemannSurface)
+function zero_divisor(RS::RiemannSurfaceModel)
   D = RiemannSurfaceDivisor(RS)
-  D.RiemannSurface = RS
+  D.riemann_surface = RS
   return D
 end
 
@@ -139,7 +90,7 @@ function *(k::Int, P::RiemannSurfacePoint)
 end
 
 function *(k::Int, D::RiemannSurfaceDivisor)
-  if k == 0 then
+  if k == 0
     return zero_divisor(riemann_surface(D))
   end
   points, mults = support(D)
@@ -150,7 +101,7 @@ function *(k::Int, D::RiemannSurfaceDivisor)
   return kD
 end
 
-function show(D::RiemannSurfaceDivisor)
+function Base.show(io::IO, D::RiemannSurfaceDivisor)
   CC = AcbField(30)
   X = riemann_surface(D)
   points, mults = support(D)
@@ -166,7 +117,7 @@ function show(D::RiemannSurfaceDivisor)
       if k > 1
         output *= " - "
       else
-        S *= "-"
+        output *= "-"
       end
     end
 
@@ -176,12 +127,12 @@ function show(D::RiemannSurfaceDivisor)
     end
     if point.is_finite
       if !point.is_singular
-        S *="($(CC(point.coordx))), $(CC(point.coordy))))"
+        output *="($(CC(point.coordx))), $(CC(point.coordy))))"
       else
-       S *="($(CC(point.coordx))), sheet $(point.sheets))"
+       output *="($(CC(point.coordx))), sheet $(point.sheets))"
       end
     else
-      S *="($(CC(point.coordx))), sheet $(point.sheets))"
+      output *="($(CC(point.coordx))), sheet $(point.sheets))"
     end
   end
 print(io, output)

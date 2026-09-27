@@ -28,8 +28,6 @@ function tanh_sinh_quadrature_integration_points(N::T, h::ArbFieldElem, lambda::
   return abscissae, weights
 end
 
-
-
 function double_exponential_integration_parameters( r::ArbFieldElem, prec::Int,  bounds::Vector{ArbFieldElem} = [parent(r)(10)^5, parent(r)(10)^5], lambda::ArbFieldElem = const_pi(parent(r))/2 )
 #Computes integration parameters for double exponential integration
   RR = parent(r)
@@ -37,7 +35,6 @@ function double_exponential_integration_parameters( r::ArbFieldElem, prec::Int, 
 
   M_1 = RR(bounds[1])
   M_2 = RR(bounds[2])
-
 
   X_r = cos(r) * sqrt( const_pi(RR)/(2*lambda*sin(r)) - 1 )
 
@@ -48,37 +45,6 @@ function double_exponential_integration_parameters( r::ArbFieldElem, prec::Int, 
   N = ceil(ZZRingElem, asinh((D+ log(8*M_1))/(2*lambda)) / h )
   return N, h
 end
-
-mutable struct IntegrationSchemeDE
-
-  abscissae::Vector{ArbFieldElem}
-  weights::Vector{ArbFieldElem}
-
-  int_param_r::ArbFieldElem
-  int_param_N::Int
-  bounds::Vector{ArbFieldElem}
-  prec::Int
-
-
-  #Compute a Gauss-Legendre integration scheme
-  function IntegrationSchemeDE(r::ArbFieldElem, prec::Int, bounds::Vector{ArbFieldElem})
-    RR = parent(r)
-    integration_scheme = new()
-    integration_scheme.prec = prec
-    @req r < const_pi(RR)/2 "Error in IntegrationSchemeDE"
-    @req r > RR(0) "Error in IntegrationSchemeDE"
-
-    N, h = double_exponential_integration_parameters(r, prec, bounds)
-    abscissae, weights = tanh_sinh_quadrature_integration_points(N, h)
-    integration_scheme.abscissae = abscissae
-    integration_scheme.weights = weights
-    integration_scheme.int_param_r = r
-    integration_scheme.bounds = bounds
-    integration_scheme.int_param_N = 2*N + 1
-    return integration_scheme
-  end
-end
-
 
 function double_exponential_line_parameters(points::Vector{AcbFieldElem}, path::CPath, lambda = const_pi(ArbField(precision(parent(path.start_point))))/2 )
   RR = ArbField(precision(parent(path.start_point)))
@@ -124,7 +90,6 @@ function double_exponential_arc_parameters(points::Vector{AcbFieldElem}, path::C
       #the real or the imaginary part is close to zero. The ambiguity disappears
       # when taking absolute values during the computation of r_p)
       t_p = or/(b - a) * (-2 * I * log(trim_zero((p - c)/(r * exp(I*(b + a)/2)))))
-      @req contains(evaluate(path, t_p),p) "Error"
       
       r_p = abs(imag(asinh(atanh(t_p)/lambda)))
       if r_p < r_0 

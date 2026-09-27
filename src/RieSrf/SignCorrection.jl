@@ -17,7 +17,7 @@ function find_correcting_matrices(g, thetas)
   fixed_thetas, non_fixed_thetas = find_fixed_even_chars(g-1)
 
   #Remove the thetas that are identically zero in case our Prym is not generic.
-  filter!(x -> !contains(thetas_prym(char), zero(RR)), non_fixed_thetas)
+  filter!(x -> !contains(thetas_prym[x], zero(RR)), non_fixed_thetas)
 
   terms = find_zero_sum_tetrads(fixed_thetas)
 
@@ -46,7 +46,7 @@ function find_correcting_matrices(g, thetas)
 
     while length(relations_from_fixed_term) < length(even_theta_characteristics(g-2))
       M0 = matrix(rand(G))
-      test, rel, M1 = relation_with_term(g-1, thetas_prym, terms[i], M0, 9)
+      test, rel, M1 = relation_with_term(g-1, thetas_prym, terms[i], M0)
       if test 
         #Ensure the fixed term is in the relation
         rel_indices = map(x -> x[1], rel)

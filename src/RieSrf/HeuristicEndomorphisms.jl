@@ -217,6 +217,15 @@ function geometric_homomorphism_representation(P::AcbMatrix, Q::AcbMatrix)
   @req number_of_columns(P) == 2*gP "P should be a g x 2g matrix"
   @req number_of_columns(Q) == 2*gQ "Q should be a g x 2g matrix"
 
+  # work at the common precision (P and Q may come from computations at
+  # different precisions; the matrices below must have the same parent)
+  if precP != precQ
+    CCmin = AcbField(min(precP, precQ))
+    P = change_base_ring(CCmin, P)
+    Q = change_base_ring(CCmin, Q)
+    precP = precQ = min(precP, precQ)
+  end
+
   JP = complex_structure(P)
   JQ = complex_structure(Q)
 
@@ -327,5 +336,5 @@ The optional argument upper_bound determines the maximal degree of the possible
 subextensions we should search for.
 """
 function geometric_endomorphism_representation_nf(P, F, v, upper_bound = 16)
-  return geometric_homomorphism_representation(P, P, F, v, upper_bound = 16)
+  return geometric_homomorphism_representation_nf(P, P, F, v, upper_bound)
 end 

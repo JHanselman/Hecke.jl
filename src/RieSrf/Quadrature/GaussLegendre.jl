@@ -15,44 +15,6 @@ export IntegrationSchemeGL
 export gauss_legendre_integration_points, gauss_chebyshev_integration_points, tanh_sinh_quadrature_integration_points,
  gauss_legendre_path_parameters
 
-  # An integration scheme
-  # consists of a list of abscissae, weights and a bunch of parameters.
-  # Every path we integrate over gets assigned one of these integrations
-  # schemes. Currently all integration schemes are Gauss-Legendre integration
-  # schemes. If we alow for different types of integration later on, we can
-  # extend this struct to also include those.
-mutable struct IntegrationSchemeGL
-
-  abscissae::Vector{ArbFieldElem}
-  weights::Vector{ArbFieldElem}
-
- # r has strong influence on the size of N while the contribution of M is
- # merely logarithmic. So, in order to minimize N the priority is to
- # maximize r such that M is still decent.
-
-  int_param_r::ArbFieldElem
-  int_param_N::Int
-  bounds::Vector{ArbFieldElem}
-  prec::Int
-
-
-  #Compute a Gauss-Legendre integration scheme
-  function IntegrationSchemeGL(r::ArbFieldElem, prec::Int, error::ArbFieldElem, bound::ArbFieldElem)
-
-    integration_scheme = new()
-    N = gauss_legendre_parameters(r, error, bound)
-    integration_scheme.int_param_N = N
-    abscissae, weights = gauss_legendre_integration_points(N, prec)
-    integration_scheme.abscissae = abscissae
-    integration_scheme.weights = weights
-    integration_scheme.int_param_r = r
-    integration_scheme.bounds = [bound]
-    integration_scheme.prec = prec
-    return integration_scheme
-  end
-
-end
-
 ################################################################################
 #
 #  Gauss-Legendre
@@ -77,9 +39,9 @@ function gauss_legendre_integration_points(N::T,
   ab = zeros_array(Rc, m)
   w = zeros_array(Rc, m)
 
-  for l in (0:m-1)
-    ccall((:arb_hypgeom_legendre_p_ui_root, libflint), Nothing, 
-    (Ref{ArbFieldElem}, Ref{ArbFieldElem}, UInt, UInt, Int), ab[l+1], w[l+1], N, l, prec)
+  Threads.@threads for l in 0:m-1
+    ccall((:arb_hypgeom_legendre_p_ui_root, libflint), Nothing,
+          (Ref{ArbFieldElem}, Ref{ArbFieldElem}, UInt, UInt, Int), ab[l+1], w[l+1], N, l, prec)
   end
 
   if isodd(N)
@@ -93,8 +55,10 @@ function gauss_legendre_integration_points(N::T,
 end
 
 function gauss_legendre_parameters(r::ArbFieldElem, error::ArbFieldElem, bound::ArbFieldElem = parent(r)(10^5))
+  @req isfinite(bound) "The bound for the integrand is not finite."
+  @req r > 1 "The ellipse parameter r must be larger than 1 (got $r)."
 
-  N = ceil(ZZRingElem, (log(64*(bound/15))-log(error)-
+  N = Hecke.upper_bound(ZZRingElem, (log(64*(bound/15))-log(error)-
     log(1-exp(acosh(r))^(-2)))/(2*acosh(r)));
   return N
 end
@@ -130,7 +94,7 @@ function split_line_segment(points::Vector{AcbFieldElem}, path::CPath, err::ArbF
   if get_int_param_r(path) < 1.2
     t = get_t_of_closest_d_point(path)
     if abs(real(t)) < (3/4)
-      x = evaluate(path, t)
+      x = evaluate(path, real(t))
     else
       x = evaluate(path,Rc(sign(Int, real(t))*3/4))
     end
@@ -144,7 +108,6 @@ function split_line_segment(points::Vector{AcbFieldElem}, path::CPath, err::ArbF
     N = gauss_legendre_parameters(get_int_param_r(path), err)
     N1 = gauss_legendre_parameters(get_int_param_r(gam1), err)
     N2 = gauss_legendre_parameters(get_int_param_r(gam2), err)
-
 
     set_int_params_N(path, N)
     set_int_params_N(gam1, N1)
@@ -164,7 +127,6 @@ end
 # Here, E_r0 = {z in C : |z-1| + |z+1| = 2cosh(r0)}. The path we integrate over
 # corresponds to the interval [-1, 1] in E_r0). Usually P will
 # consist of the ramification points and the singular points.
-
 
 function gauss_legendre_line_parameters(points::Vector{AcbFieldElem}, path::CPath)
   CC = parent(points[1])
@@ -222,10 +184,6 @@ function gauss_legendre_arc_parameters(points::Vector{AcbFieldElem}, path::CPath
       #the real or the imaginary part is close to zero. The ambiguity disappears
       # when taking absolute values during the computation of r_p)
       t_p = or/(b - a) * (-2 * I * log(trim_zero((p - c)/(r * exp(I*(b + a)/2)))))
-      #t_p2 = or/(b - a) * (-2 * I * (log(trim_zero((p - c)/(r * exp(I*(b + a)/2)), zero_sens)))+2*pi*I)
-      #r_p = minimum(x-> Rr((abs(x + 1) + abs(x - 1))/2), ts)
-      @req contains(evaluate(path, t_p),p) "Error"
-      #t_p = or/(b - a) * (-2 * I * mod2pi_i((log(trim_zero(p - c, zero_sens)) -log(r) - I*(b + a)/2)))
       r_p = Rr((abs(t_p + 1) + abs(t_p - 1))/2)
     end
 
@@ -266,14 +224,7 @@ function gauss_legendre_circle_parameters(points::Vector{AcbFieldElem}, path::CP
       #trim_zero is used to avoid errors in taking log. (It's ambiguous if either
       #the real or the imaginary part is close to zero. The ambiguity disappears
       # when taking absolute values during the computation of r_p)
-      prec = precision(CC)
-      zero_sens = floor(Int, prec*log(2)/log(10)) - 5
-
       t_p = -or/Rpi * I * log(trim_zero((c - p) /(r* exp(I * a))))
-
-      @req contains(evaluate(path, t_p) - p, CC(0)) "Error"
-
-      #t_p = -or/Rpi * I * mod2pi_i((log(trim_zero(c - p, zero_sens)) - log(r) - I * a))
       r_p = Rr((abs(t_p + 1) + abs(t_p - 1))/2)
     end
 
@@ -311,35 +262,3 @@ function gauss_chebyshev_integration_points(N::T, prec::Int = 100) where T <: In
   isodd(N) ? abscissae = vcat(-ab, [zero(Rc)], reverse(ab)) : abscissae = vcat(-ab, reverse(ab))
   return abscissae, fill(const_pi(Rc)//(N), N)
 end
-
-#=
-@doc raw"""
- tanh_sinh_quadrature_integration_points(N::T, h::ArbFieldElem, 
- lambda::ArbFieldElem = const_pi(parent(h))/2) where T <: IntegerUnion
-
-Compute abscissae and weights according to the tanh-sinh_quadrature
-integration scheme. 
-"""
-function tanh_sinh_quadrature_integration_points(N::T, h::ArbFieldElem, lambda::ArbFieldElem = const_pi(parent(h))/2) where T <: IntegerUnion
-  Rc = parent(h)
-  N = Int(N)
-
-  abscissae = zeros_array(Rc, N)
-  weights = zeros_array(Rc, N)
-
-  lamh = lambda * h
-
-  for l in (1:N)
-    lh = l*h
-    lamsin_lh = lambda*sinh(lh)
-
-    abscissae[l] = tanh(lamsin_lh)
-    weights[l] = lamh * cosh(lh)//(cosh(lamsin_lh))^2
-  end
-
-  abscissae = vcat(-reverse(abscissae), [zero(Rc)], abscissae)
-  weights = vcat(reverse(weights), [lamh], weights)
-
-  return abscissae, weights
-end
-=#

@@ -586,7 +586,7 @@ function signs_from_relations(g::Int, thetas::Dict{NTuple{N, Int64}, AcbFieldEle
 end
 
 
-function relation_with_term(g::Int, thetas::Dict{NTuple{N, Int64}, AcbFieldElem}, terms, T::FqMatrix, max_size) where N
+function relation_with_term(g::Int, thetas::Dict{NTuple{N, Int64}, AcbFieldElem}, terms, T::FqMatrix) where N
   @req g >= 4 "g needs to be bigger than 3."
   OO = max_noether_characteristics(g)
   v1 = max_noether_characteristics(g)[1]
@@ -681,7 +681,13 @@ function relation_with_term(g::Int, thetas::Dict{NTuple{N, Int64}, AcbFieldElem}
 
   sol = integral_left_kernel(matrix(terms))[1][end,:]
   result = filter(x->x[2]!=0, collect(zip(term_tup, sol)))
-  if length(result) > 2 &&  length(result)< max_size #Depends on genus, but you might be able to get away with all relations with 4 terms.
+  nonsquare = true
+  for t in term_tup
+    if !allunique(t)
+      nonsquare = false
+    end
+  end
+  if length(result) > 2 &&  nonsquare 
     return true, sort!(result), T*M
   else 
     return false, [(Vector{Int64}[],ZZ(0))], T*M

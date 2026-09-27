@@ -1,10 +1,11 @@
 
+
+
+
+#thetas_prym_sq = prym_thetas_sq(g, thetas)
+#O = odd_theta_relations(g-1, thetas_prym_sq)
+
 GF2 = GF(2)
-
-
-thetas_prym_sq = prym_thetas_sq(g, thetas)
-O = odd_theta_relations(g-1, thetas_prym_sq)
-
 odds = odd_theta_characteristics(g-1)
 
 odd_prym_indices = char_to_index.(collect.(odd_theta_characteristics(g-1)))
@@ -28,23 +29,66 @@ for r in R
   bigM = [bigM ; M]
 end
 
-bigM_float = Complex{Float64}.(collect(matrix(bigM)[:,odd_indices]))
-K = nullspace(bigM_float)
+bigM_prym = Vector{AcbFieldElem}[]
+
+rho1 = GF2.([1,0,0,0,0,0,0,0])
+rho2 = GF2.([1,1,0,0,0,1,0,1])
+rho3 = GF2.([0,1,1,0,0,1,1,0])
+rho4 = GF2.([0,1,0,1,0,0,0,1])
+rho5 = GF2.([1,1,1,1,1,1,1,1])
+rho6 = GF2.([1,0,1,1,0,1,0,1])
+rho7 = GF2.([1,0,0,1,1,1,0,1])
+rho8 = GF2.([0,0,1,1,1,0,0,0])
+
+R = [rho1, rho2, rho3, rho4, rho5, rho6, rho7, rho8]
+
+prec = 150
+setprecision(BigFloat, prec)
+
+for r in R
+  M_prym = construct_fay_matrix(g-1, thetas_prym, r)
+  bigM_prym = [bigM_prym ; M_prym]
+end
+
+bigM_float = (x->Complex{Float64x2}(Complex{BigFloat}(x))).(collect(matrix(bigM)[:,odd_indices]))
+K = manual_kernel(bigM_float;prec = :x2)[1]
+K = permutedims(nullspace(bigM_float))
+
+
+bigM_float_prym = Complex{BigFloat}.(collect(matrix(bigM_prym)[:,odd_prym_indices]))
+K_prym = manual_kernel(bigM_float_prym;prec = :x2)[1]
 
 I = lift_prym_indices(g)
 
-HiHis = Vector{Complex{Float64}}[]
+
+
+HiHis = []
 for i in (1:length(odds)) 
   i1, i2 = I[i]
   L = K[i1,:] * transpose(K[i2, :])
   LL = L + transpose(L)
-  HiHi = collect(Iterators.flatten(LL))
+  HiHi = reduce(vcat, [[LL[i,j] for i in (j:g)] for j in (1:g)])
+
+  push!(HiHis, HiHi)
 end
 
-HiHis2 = mapreduce(permutedims, vcat, HiHis)
-TT =  O * HiHis2
+li_sqs = []
+for i in (1:length(odds)) 
+  L = K_prym[i,:] * transpose(K_prym[i, :])
+  li_sq = reduce(vcat, [[L[i,j] for i in (j:g-1)] for j in (1:g-1)])
+  push!(li_sqs, li_sq)
+end
 
-(x-> abs(x) < 10^(-12) ? zero(ComplexF64) : x).(TT)
+
+HiHis2 = mapreduce(permutedims, vcat, HiHis)
+li_sqs2 = mapreduce(permutedims, vcat, li_sqs)
+O = manual_kernel(permutedims(li_sqs2);prec = :x2)[1]
+TT =  permutedims(O) * HiHis2
+rank(TT)
+
+svd(TT)
+
+(x-> abs(x) < 10^(-12) ? zero(Complex{BigFloat}) : x).(TT)
 function lift_prym_indices(g::Int)
   odds = odd_theta_characteristics(g-1)
   lifted = odd_theta_characteristics(g)
@@ -160,7 +204,7 @@ for i in (1:N)
   #by applying an orthogonal matrix.
   while length(relations_from_fixed_term) < 6
     M0 = matrix(rand(G))
-    test, rel, _ = relation_with_term(g-1, thetas_prym, terms[i], M0, 6)
+    test, rel, _ = relation_with_term(g-1, thetas_prym, terms[i], M0)
     unique_rels = Set([])
     if test
       #Ensure the fixed term is in the relation
@@ -408,3 +452,36 @@ g = 5
 945 relations with 8 terms
 210 of them with a fixed term
 =#
+
+
+R, (x,y) = polynomial_ring(QQ, [:x,:y])
+#This case has a Prym in a non-generic locus.
+#f = -34*x^2*y^7 + 50*x^2*y^6 - 3*x^2*y^5 - 5*x^2*y^4 + 28*x^2*y^3 - 11*x^2*y^2 + 41*x^2*y - 19*x^2 + 47*x*y^7 - 43*x*y^5 + 14*x*y^4 - 37*x*y^3 + 17*x*y^2 + 27*x*y + x + 6*y^7 + 29*y^6 + 29*y^5 - 25*y^4 + 14*y^3 - 22*y^2 + 30*y + 43
+f = x^6 + x^3*y - x^2*y^3 - 3*x^2*y^2 - 2*x^2*y + 2*x*y^4 + 3*x*y^3 + x*y^2 - y^5 - y^4
+@time RS = riemann_surface(f, 200, integration_method = "heuristic")
+g = genus(RS)
+tau = small_period_matrix(RS)
+CC = complex_field(RS)
+z = zeros(CC, g)
+@time thetas = Hecke.thetas(z, tau)
+
+
+function manual_kernel(M)
+  T  = Complex{Float64x2}          # ~128 digits; Float64x4 ≈ 64 digits
+  A  = T.(M)                   # your Complex{BigFloat} matrix, odd columns only
+  A0 = ComplexF64.(A)              # or Complex{Float64x2} if Float64 is too coarse
+
+  # 1. Rank and pivot choice (cheap)
+  Fc = qr(A0, ColumnNorm())
+  d  = abs.(diag(Fc.R));  r = count(>(1e-10 * d[1]), d)   # inspect the gap in d!
+
+  F = qr(copy(A'))                       # n×m Householder QR, O(n·m²)
+  n = ncols(A)
+  E = zeros(T, n, n - r)
+  for j in 1:n-r
+      E[r+j, j] = one(T)
+  end
+  N = F.Q * E  
+  return N
+end
+

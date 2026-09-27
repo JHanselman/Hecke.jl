@@ -14,55 +14,195 @@ export big_period_matrix, small_period_matrix
 
 #Computes a big period matrix for the Riemann surface.
 @doc raw"""
- big_period_matrix(RS::RiemannSurface)
+ big_period_matrix(RS::RiemannSurfaceModel)
 
 Compute the big period matrix for the Riemann surface.
 """
-function big_period_matrix(RS::RiemannSurface;int_style::String = "Mixed")
-
-  if isdefined(RS, :big_period_matrix)
-    return RS.big_period_matrix
+function big_period_matrix(RS::RiemannSurfaceModel)
+  isdefined(RS, :big_period_matrix) && return RS.big_period_matrix
+  # A failed computation leaves the paths etc. half-modified, and the
+  # parameters cannot be changed anymore: do not retry on the same object.
+  if isdefined(RS, :computation_failure)
+    error("The period matrix computation for this Riemann surface failed earlier " *
+          "($(sprint(showerror, RS.computation_failure))). Use " *
+          "with_integration_parameters(RS; ...) to try again on a new surface.")
   end
+  try
+    return _big_period_matrix(RS)
+  catch e
+    RS.computation_failure = e
+    rethrow()
+  end
+end
+
+# T = prec + guard + ceil(log2 K) (at least the minimum set by a retry),
+# W = T + guard, but not below the initial W (see _quadrature_guard_bits).
+function _set_target_precision!(RS::RiemannSurfaceModel, K::Int)
+  prec = precision(RS)
+  T = prec + _quadrature_guard_bits() + _genus_guard_bits(genus(RS)) + ceil(Int, log2(max(K, 1)))
+  T = max(T, RS.min_target_precision)
+  RS.target_precision = T
+  RS.computational_precision = max(T, _initial_target_precision(prec)) + _rounding_guard_bits()
+  RS.computational_error = ArbField(RS.computational_precision)(2)^(-T)
+  return RS
+end
+
+# -log2 of the largest radius of the real and imaginary parts of the entries
+# of M (Inf if all entries are exact).
+function _claimed_bits(M::AcbMatrix)
+  RR = ArbField(64)
+  r = zero(RR)
+  for i in 1:nrows(M), j in 1:ncols(M)
+    r = max(r, RR(radius(real(M[i, j]))), RR(radius(imag(M[i, j]))))
+  end
+  iszero(r) && return Inf
+  return -_arb_mid_f64(log(r) / log(RR(2)))
+end
+
+function _big_period_matrix(RS::RiemannSurfaceModel)
+  isdefined(RS, :big_period_matrix) && return RS.big_period_matrix
+  P = _compute_big_period_matrix(RS)
+  if RS.resolved_parameters.precision_retry
+    g = genus(RS)
+    deficit = precision(RS) - _claimed_bits(_solve_precond(P[1:g, 1:g], P[1:g, g+1:2*g]))
+    if deficit > 0
+      old_target = RS.target_precision
+      RS.precision_retries += 1
+      RS.min_target_precision = old_target + ceil(Int, deficit) + _retry_extra_bits()
+      @debug "Precision retry: tau is short of $(round(deficit, digits = 1)) bits, target $(old_target) -> $(RS.min_target_precision)"
+      # Redo the integration from the splitting of the paths on; the
+      # fundamental group, the chains and the homology basis are kept.
+      # (subpaths far from all discriminant points have no closest point and
+      #  keep the fixed bound 1 set with their parameters)
+      RS.bounds = ArbFieldElem[]
+      allp = vcat(fundamental_group_of_punctured_P1(RS)[1],
+                  isdefined(RS, :direct_inf_paths) ? RS.direct_inf_paths : CPath[])
+      for path in allp, sp in unique(vcat([path], get_subpaths(path)))
+        isdefined(sp, :t_of_closest_d_point) && empty!(sp.bounds)
+      end
+      P = _compute_big_period_matrix(RS; resplit = false)
+    end
+  end
+  RS.big_period_matrix = P
+  return P
+end
+
+# A direct loop around infinity: a line from the base point x0 to a point p on
+# a big circle, and the circle. The circle has center c (center of the
+# bounding box of the discriminant points) and radius R >= twice their largest
+# distance from c, so it stays at distance >= R/2 from all of them; x0 lies
+# well inside. The base point need not lie to the left of the discriminant
+# points (e.g. the midpoint of an edge), so the direction of the line is
+# chosen among 64 directions to keep it as far as possible (relative to its
+# length) from all discriminant points.
+function _direct_inf_paths(RS::RiemannSurfaceModel)
+  isdefined(RS, :direct_inf_paths) && return RS.direct_inf_paths
+  D = internal_discriminant_points(RS)
+  CC = parent(D[1])
+  x0 = CC(RS.base_point.coordx)
+  z = [ComplexF64(Float64(real(q)), Float64(imag(q))) for q in D]
+  w0 = ComplexF64(Float64(real(x0)), Float64(imag(x0)))
+  c64 = complex((minimum(real, z) + maximum(real, z))/2, (minimum(imag, z) + maximum(imag, z))/2)
+  R64 = max(2*maximum(abs(w - c64) for w in z), 2*abs(w0 - c64), 1.0)
+  best, pbest = -Inf, c64 - R64
+  for k in 0:63
+    u = cis(2*pi*k/64)
+    # exit point of the ray x0 + s u (s > 0) from the circle |x - c| = R
+    b = real(conj(u)*(w0 - c64))
+    s = -b + sqrt(b^2 - abs2(w0 - c64) + R64^2)
+    q = w0 + s*u
+    # clearance: min distance of the discriminant points to the segment, relative to its length
+    cl = minimum(abs(w - (w0 + clamp(real(conj(u)*(w - w0)), 0.0, s)*u)) for w in z) / s
+    if cl > best
+      best, pbest = cl, q
+    end
+  end
+  c = CC(real(c64), imag(c64))
+  p = CC(real(pbest), imag(pbest))
+  L = c_line(x0, p, CC)
+  circ = c_circle(p, c, CC)
+  RS.direct_inf_paths = [L, circ]
+  return RS.direct_inf_paths
+end
+
+_max_radius_64(M::AcbMatrix) = maximum(max(ArbField(64)(radius(real(M[i, j]))), ArbField(64)(radius(imag(M[i, j]))))
+                                       for i in 1:nrows(M), j in 1:ncols(M))
+
+# Compare the loop around infinity composed of the other loops with the direct
+# one (either orientation, same permutation). If they overlap, keep the one
+# with the smaller radius; otherwise warn.
+function _check_direct_inf_chain!(RS::RiemannSurfaceModel)
+  L, circ = RS.direct_inf_paths
+  S = RS.inf_chain
+  M = S.integral_matrix
+  for c in (circ, reverse(circ))
+    D = CChain([L, c, reverse(L)])
+    D.permutation == S.permutation || continue
+    N = D.integral_matrix
+    all(overlaps(N[i, j], M[i, j]) for i in 1:nrows(M), j in 1:ncols(M)) || continue
+    RS.infinity_check = 1
+    _max_radius_64(N) < _max_radius_64(M) && (S.integral_matrix = N)
+    return RS
+  end
+  RS.infinity_check = -1
+  @warn "The integrals along a loop around infinity computed directly and as a composition of the other loops do not agree. The period matrix is probably wrong." maxlog = 1
+  return RS
+end
+
+# resplit = false (precision retry): keep the subpaths and their quadrature
+# type from the first pass, only the bounds, schemes and integrals are redone.
+function _compute_big_period_matrix(RS::RiemannSurfaceModel; resplit::Bool = true)
+  _ensure_differentials!(RS)
+  params = _resolve_integration_parameters!(RS)   # fixed from here on
 
   g = genus(RS)
-  diff_base = basis_of_differentials(RS)
-  paths, pi1_gens, ordered_disc_points = fundamental_group_of_punctured_P1(RS)
+  # the exact basis is only needed for the rigorous bounds (and in the
+  # certified Baker case it is not computed at all)
+  # (the cached value is a 2-tuple, so take the disc. points from the field;
+  #  with lazy construction the fundamental group may already be cached here)
+  paths, pi1_gens = fundamental_group_of_punctured_P1(RS)
+  ordered_disc_points = RS.pi1_ordered_disc_points
   num_paths = length(paths)
+  # the paths of the direct loop around infinity are integrated with the
+  # others (appended: the indices of pi1_gens stay valid)
+  params.direct_infinity && (paths = vcat(paths, _direct_inf_paths(RS)))
   prec = precision(RS)
   disc_points = internal_discriminant_points(RS)
 
-  
-  differentials = RS.differential_form_data[1]
+  differentials = differential_form_data(RS)[1]
 
   v = embedding(RS)
 
-  max_prec = RS.computational_precision
-  RR = ArbField(max_prec)
-
-  embedded_differentials = [embed_mpoly(g, v, max_prec) for g in differentials]
-  dif_basis = [omega.f for omega in diff_base]
+  RR = ArbField(RS.computational_precision)
+  dif_basis = params.integration_method == "rigorous" ? [omega.f for omega in basis_of_differentials(RS)] : nothing
 
   k = RR(103/100)
 
-  double_exponential_int_pars = []
-  gauss_legendre_int_pars = []
+  double_exponential_int_pars = ArbFieldElem[]
+  gauss_legendre_int_pars = ArbFieldElem[]
 
   #path`N seems to be less than what it is in Neurohr's implementation.
   #Neurohr takes disc_points of low precision here, but I don't see any 
   #real reason for us to do so as well. I expect higher precision to improve
   #stability.
 
-  int_style = RS.int_style
-  
+  int_style = params.int_style
 
-  if int_style == "Mixed" || int_style == "GL"
+  if !resplit
+    for path in paths, subpath in get_subpaths(path)
+      push!(subpath.integration_scheme == "GL" ? gauss_legendre_int_pars : double_exponential_int_pars,
+            subpath.int_param_r)
+    end
+  end
 
-    for path in paths
+  if resplit && (int_style == "Mixed" || int_style == "GL")
+
+    Threads.@threads :dynamic for path in paths
       gauss_legendre_path_parameters(disc_points, path, RS.computational_error)
     end
   end
 
-  if int_style == "Mixed"
+  if resplit && int_style == "Mixed"
     for path in paths
       for subpath in path.sub_paths
         if subpath.int_param_r < k 
@@ -78,7 +218,7 @@ function big_period_matrix(RS::RiemannSurface;int_style::String = "Mixed")
     end
   end
 
-  if int_style == "GL"
+  if resplit && int_style == "GL"
     for path in paths
       for subpath in path.sub_paths
         subpath.integration_scheme = "GL"
@@ -87,7 +227,7 @@ function big_period_matrix(RS::RiemannSurface;int_style::String = "Mixed")
     end
   end 
 
-  if int_style == "DE"
+  if resplit && int_style == "DE"
     for path in paths
       double_exponential_path_parameters(disc_points, path)
       path.integration_scheme = "DE"
@@ -95,42 +235,19 @@ function big_period_matrix(RS::RiemannSurface;int_style::String = "Mixed")
     end
   end 
 
+  # target and working precision from the number of subpaths
+  nr_of_subpaths = int_style == "DE" ? length(paths) : sum(length(get_subpaths(p)) for p in paths)
+  _set_target_precision!(RS, nr_of_subpaths)
+  max_prec = RS.computational_precision
+  RR = ArbField(max_prec)
+  embedded_differentials = [embed_mpoly(g, v, max_prec) for g in differentials]
 
-
-  #Set up GL integration schemes
+ #Set up GL integration schemes (optimal grouping, see _gl_group_rs)
   nr_of_GL_int_pars = length(gauss_legendre_int_pars)
-  if nr_of_GL_int_pars > 0 
+  if nr_of_GL_int_pars > 0
     sort!(gauss_legendre_int_pars)
-    r_minimum = gauss_legendre_int_pars[1]
-    RR = parent(r_minimum)
-    eps = RR(1/100)
-    gauss_legendre_int_groups = [ ArbFieldElem[],ArbFieldElem[],ArbFieldElem[],ArbFieldElem[],ArbFieldElem[] ]
-    for r in gauss_legendre_int_pars
-      if r < r_minimum + RR(0.1)
-        push!(gauss_legendre_int_groups[1],r)
-      elseif r < r_minimum + RR(0.4)
-        push!(gauss_legendre_int_groups[2],r)
-      elseif r < r_minimum + RR(0.9)
-        push!(gauss_legendre_int_groups[3],r)
-      elseif r < r_minimum + RR(2.0)
-        push!(gauss_legendre_int_groups[4],r)
-      else
-        push!(gauss_legendre_int_groups[5],r)
-      end
-    end
-
-    #Make r_minimum slightly smaller than what it was. (But still larger than 1)
-    if r_minimum <= RR(1) + 2 * eps
-      gauss_legendre_int_group_rs= [(1/2)*(r_minimum+1)]
-    else
-      gauss_legendre_int_group_rs = [r_minimum-eps]
-    end
-
-    #We only consider int_groups that contain more than 2 elements. If they only have two
-    #or less elements, we simply group them together with the previous group
-    gauss_legendre_int_groups = filter(x -> length(x) > 2, gauss_legendre_int_groups[2:end])
-
-    append!(gauss_legendre_int_group_rs, [ minimum(int_group) - eps for int_group in gauss_legendre_int_groups])
+    RR = parent(gauss_legendre_int_pars[1])
+    gauss_legendre_int_group_rs = _gl_group_rs(gauss_legendre_int_pars, RS.computational_error; c = params.group_cost)
   end
 
   #Set up DE integration schemes
@@ -140,7 +257,6 @@ function big_period_matrix(RS::RiemannSurface;int_style::String = "Mixed")
     sort!(double_exponential_int_pars)
     r_minimum = double_exponential_int_pars[1]
     r_maximum = double_exponential_int_pars[end]
-
 
     min_max_diff = RR(0)
     try 
@@ -158,36 +274,32 @@ function big_period_matrix(RS::RiemannSurface;int_style::String = "Mixed")
     end
   end
 
-
     # Computed the bound M for every path. The bound M is the maximum value of
     # the integrands along the boundary of the ellipse with radius r.
 
   GL_bound_temp = Vector{ArbFieldElem}()
   DE_bound_temp = Vector{ArbFieldElem}()
-  for path in paths
-    for subpath in get_subpaths(path)
-      if subpath.integration_scheme == "GL"
-        if path_type(subpath) == 0 && RS.integration_method == "rigorous"
-          compute_ellipse_bound_rigorous(subpath, dif_basis, gauss_legendre_int_group_rs, RS)
-        elseif path_type(subpath) == 0 && RS.integration_method == "heuristic"
-          compute_ellipse_bound_heuristic(subpath, embedded_differentials, gauss_legendre_int_group_rs, RS)
-        else 
-          compute_ellipse_bound_heuristic(subpath, embedded_differentials, gauss_legendre_int_group_rs, RS)
-        end
-        append!(GL_bound_temp, subpath.bounds)
-      elseif subpath.integration_scheme == "DE"
-        compute_burger_bound_heuristic(subpath, embedded_differentials, double_exponential_int_group_rs, RS)
-        append!(DE_bound_temp, subpath.bounds)
+  subpaths = [subpath for path in paths for subpath in get_subpaths(path)]
+  Threads.@threads :dynamic for subpath in subpaths
+    if subpath.integration_scheme == "GL"
+      if path_type(subpath) == 0 && params.integration_method == "rigorous"
+        compute_ellipse_bound_rigorous(subpath, dif_basis, gauss_legendre_int_group_rs, RS)
       else
-        error("Integration scheme does not exist.")
+        compute_ellipse_bound_heuristic(subpath, embedded_differentials, gauss_legendre_int_group_rs, RS)
       end
+    elseif subpath.integration_scheme == "DE"
+      compute_burger_bound_heuristic(subpath, embedded_differentials, double_exponential_int_group_rs, RS)
+    else
+      error("Integration scheme does not exist.")
     end
+  end
+  for subpath in subpaths
+    append!(subpath.integration_scheme == "GL" ? GL_bound_temp : DE_bound_temp, subpath.bounds)
   end
 
   if nr_of_GL_int_pars>0
     GL_bound_temp_max = maximum(GL_bound_temp)
-  
-  
+
     push!(RS.bounds, GL_bound_temp_max)
     bound = maximum(RS.bounds)
 
@@ -204,96 +316,9 @@ function big_period_matrix(RS::RiemannSurface;int_style::String = "Mixed")
     DE_bound_temp_max = maximum(DE_bound_temp)
     push!(RS.bounds, DE_bound_temp_max)
     bound = maximum(RS.bounds)
-    RS.integration_schemes_DE = [IntegrationSchemeDE(r, max_prec, [bound, bound]) for r in double_exponential_int_group_rs ]
+    RS.integration_schemes_DE = [IntegrationSchemeDE(r, max_prec, [bound, bound], RS.target_precision) for r in double_exponential_int_group_rs ]
   end
 
-  
-
-#=
-  #Compute the integration parameters r for all of the paths.
-  int_parameters = ArbFieldElem[]
-  for path in paths
-    if path_type(path) == 0
-      L = [ get_int_param_r(sub_path) for sub_path in get_subpaths(path) ]
-      append!(int_parameters, [ get_int_param_r(sub_path) for sub_path in get_subpaths(path) ])
-    else
-      append!(int_parameters, [get_int_param_r(path)])
-      if get_int_param_r(path)<1
-      end
-    end
-  end
-  sort!(int_parameters)
-  r_minimum = int_parameters[1]
-  RR = parent(r_minimum)
-  eps = RR(1/100)
-=#
-
-
-#=
-  Ns = map(r-> gauss_legendre_parameters(r, RS.computational_error), int_parameters)
-  diffs = [Ns[i] - Ns[i-1] for i in (2:length(Ns))]
-
-  b = cumsum(diffs)
-
-  max_cumsum = b[end]
-
-  #Experimenting with dynamic number of integration groups. It seems a bit faster than Neurohr
-  #Need to experiment more with optimal setting
-  nr_of_groups = max(5, ceil(Int, length(paths)/5))
-
-  r_bounds = ArbFieldElem[]
-
-  for i in (1:nr_of_groups)
-    a = findfirst(x-> x < i*div(max_cumsum,nr_of_groups), b)
-    if a!= nothing
-      push!(r_bounds, int_parameters[a])
-    end
-  end
-
-
-  #We group the paths together based on their r-value. As a consequence, we will
-  #have to compute fewer integration schemes later making the algorithm faster.
-
-  int_groups = [ ArbFieldElem[] for i in (1:length(r_bounds)+1)]
-  r_counts = [0 for i in (1:length(r_bounds)+1)]
-	for r in int_parameters
-    found = false
-		for i in (1:length(r_bounds))
-      if r < r_bounds[i]
-        push!(int_groups[i],r)
-        r_counts[i]+=1
-        found = true
-        break
-      end
-    end
-    if !found
-      push!(int_groups[end], r)
-      r_counts[end]+=1
-    end
-	end
-
-  #Make r_minimum slightly smaller than what it was. (But still larger than 1)
-
-
-  #We only consider int_groups that contain more than 2 elements. If they only have two
-  #or less elements, we simply group them together with the previous group
-  int_groups = vcat([[r_minimum]],filter(x -> length(x) > 2, int_groups[2:end]))
-  int_group_rs = ArbFieldElem[]
-
-  prev_r = RR(1)
-
-  for int_group in int_groups
-    minimum_r = minimum(int_group)
-    if minimum_r <= prev_r + 2 * eps
-      final_r = (1/2)*(minimum_r+prev_r)
-    else
-      final_r = minimum_r - eps
-    end
-    push!(int_group_rs, final_r)
-  end
-=#
-
-  
   f = embed_mpoly(defining_polynomial(RS), v, max_prec)
   CC = base_ring(f)
   I = onei(CC)
@@ -303,108 +328,56 @@ function big_period_matrix(RS::RiemannSurface;int_style::String = "Mixed")
   Ky, y = polynomial_ring(base_ring(Kxy), "y")
   m = degree(f, 2)
 
-  # Copied from monodromy_representation to compute the monodromy representation
-  # we just computed while computing periods.
-  # There is probably a more clever way to avoid doubling code.
-
-  # The difference between this and the monodromy code is that
-  # we compute the integrals during analytic continuation here
-  # and that we use the Ns determined by the integration scheme.
-  # If we are only interested in the monodromy we need far less.
+  # The monodromy representation is computed here as a by-product of the
+  # analytic continuation along the paths. (If only the monodromy were needed,
+  # far fewer points than the abscissae of the integration schemes would do.)
   s_m = SymmetricGroup(m) # ::AbstractAlgebra.Generic.SymmetricGroup{Int}
 
-  ys = Vector{AcbFieldElem}()
-  Cp = AcbField(max_prec)
-  for path in paths
-    CC = AcbField(max_prec)
-		integral_matrix = zero_matrix(CC, m, g)
-    subpaths = path.sub_paths
-    x0 = start_point(subpaths[1])
-		ys =  sort!(roots(f(x0, y), initial_prec = max_prec), lt = sheet_ordering)
+  _, fm, mp, rp = differential_form_data(RS)
+  Cp = AcbField(max_prec)          # created once, before any threads
+  f_split = _split_in_y(f)         # f already embedded at max_prec
 
-		for subpath in subpaths
-
-      if subpath.integration_scheme == "GL"
-			  integration_scheme = RS.integration_schemes_GL[subpath.integration_scheme_index]
-      elseif subpath.integration_scheme == "DE"
-        integration_scheme = RS.integration_schemes_DE[subpath.integration_scheme_index]
-      else
-        error("Invalid integration scheme.")
-      end
-
-			path_difference_matrix = zero_matrix(CC, m, g)
-      abscissae = integration_scheme.abscissae
-      weights = integration_scheme.weights
-      N = length(abscissae)
-			An_x, An_y = analytic_continuation(RS, subpath, abscissae, ys, max_prec)
-
-      # For every path, we compute the integrals for all g differential forms
-      # at all m sheets at the same time.
-			if path_type(subpath) == 0
-				for i in (1:N)
-          # For every abscissa we compute the value of the function at that
-          # point, multiply it with the correct weight and add it to the
-          # intrgral.
-					integral_matrix_contribution = evaluate_differential_factors_matrix(RS, embedded_differentials, An_x[i+1], An_y[i+1])
-          integral_matrix_contribution *= weights[i]
-					path_difference_matrix += integral_matrix_contribution
-				end
-        path_difference_matrix *= evaluate_d(subpath, abscissae[1])
-				integral_matrix += path_difference_matrix
-        subpath.integral_matrix = path_difference_matrix
-			else
-        for i in (1:N)
-					integral_matrix_contribution = evaluate_differential_factors_matrix(RS, embedded_differentials,An_x[i+1], An_y[i+1])
-          # For arcs and circles we need to multiply with an additional dx.
-          integral_matrix_contribution *= weights[i] * evaluate_d(path, abscissae[i])
-					path_difference_matrix += integral_matrix_contribution
-				end
-				integral_matrix += path_difference_matrix
-			end
-      ys = An_y[end]
-
-        # Copied from monodromy_representation to compute the monodromy representation
-        # we just computed while computing periods.
-       # There is probably a more clever way to avoid doubling code.
-      path_perm = sortperm(An_y[end], lt = sheet_ordering)
-      assign_permutation(path, inv(s_m(path_perm)))
-		end
-    path.integral_matrix = integral_matrix
-	end
-
-  # Copied from monodromy_representation to compute the monodromy representation
-  # we just computed while computing periods.
-  # There is probably a more clever way to avoid doubling code.
-
-  mon_rep = Perm{Int}[]
-  closed_chains = CChain[]
-
-  for i in (1:length(pi1_gens))
-    gamma = pi1_gens[i]
-    chain = map(t -> ((t > 0) ? paths[t] : reverse(paths[-t])), gamma)
-    gamma_perm = prod(map(permutation, chain))
-
-    cchain = CChain(chain, ordered_disc_points[i])
-
-    if gamma_perm != one(s_m)
-      push!(closed_chains, cchain)
-     end
+  scheme(sp) = sp.integration_scheme == "GL" ? RS.integration_schemes_GL[sp.integration_scheme_index] :
+                                             RS.integration_schemes_DE[sp.integration_scheme_index]
+  cost(p) = sum(length(scheme(sp).abscissae) for sp in p.sub_paths)
+  order = sortperm(paths, by = cost, rev = true)
+  # Optional low precision for the intermediate continuation points (off when
+  # params.midpoint_precision == 0, or when it would not be lower than max_prec).
+  lo_data = nothing
+  if params.midpoint_precision > 0
+    lo_prec = max(100, min(params.midpoint_precision, max_prec))
+    # The low precision must resolve the geometry: if discriminant points lie
+    # closer together than ~2^(30 - lo_prec) (relative), steps near them cannot
+    # even be represented at lo_prec. Then switch the midpoint precision off
+    # (recorded in the resolved parameters).
+    if lo_prec < max_prec && !_resolvable_at(disc_points, lo_prec - 30)
+      @info "Midpoint precision $(params.midpoint_precision) is too low for the distances between the discriminant points of this curve; it is switched off."
+      params.midpoint_precision = 0
+    elseif lo_prec < max_prec
+      f_lo = embed_mpoly(defining_polynomial(RS), v, lo_prec)
+      Ky_lo, _ = polynomial_ring(base_ring(f_lo), "y")
+      lo_data = (_split_in_y(f_lo), Ky_lo)
+    end
   end
 
+  _integrate_paths_chunked!(paths, order, scheme, Cp, max_prec, f_split, Ky,
+                            embedded_differentials, fm, mp, rp, s_m, m, g;
+                            chunk_len = params.chunk_len, lo_data = lo_data, adaptive = params.adaptive,
+                            qerr = RS.computational_error)
 
-  inf_cchain = Hecke.RiemannSurfaces.make_inf_chain(closed_chains)
-  push!(closed_chains, inf_cchain)
-
-  RS.inf_chain = inf_cchain
-  RS.closed_chains = closed_chains[1:end-1]
-
-
-  mon_rep = map(t -> permutation(t), closed_chains)
-  RS.monodromy_representation = mon_rep
-
+  # The monodromy (the chains around the discriminant points and around
+  # infinity) is a by-product of the continuation along the paths. If it was
+  # computed before without periods (_ensure_monodromy!), the chains are kept
+  # and only get their integral matrices.
+  if isdefined(RS, :pi1_chains)
+    _refresh_chains!(RS)
+  else
+    _build_chains!(RS, paths, pi1_gens, s_m)
+  end
+  params.direct_infinity && _check_direct_inf_chain!(RS)
+  closed_chains = vcat(RS.closed_chains, [RS.inf_chain])
 
   cycles, K, sym_transform = homology_basis(RS)
-
 
   # The pre-period matrix is the matrix computed using the 2g + m - 1 cycles
   # computed by homology_basis. We will later normalize this using the matrix S
@@ -452,18 +425,17 @@ function big_period_matrix(RS::RiemannSurface;int_style::String = "Mixed")
   # Cut of the first 2g columns to get the actual period matrix.
 	big_period_matrix = transpose(PMAPMB[1:2*g,:])
   dependent_columns = PMAPMB[2g+1:end, :]
-  RS.big_period_matrix = big_period_matrix
   @req all([contains(r, zero(CC)) for r in dependent_columns]) "Sanity check failed. There may have been an error in the period matrix computation."
   return big_period_matrix
 end
 
 #Compute the small period matrix.
 @doc raw"""
- small_period_matrix(RS::RiemannSurface)
+ small_period_matrix(RS::RiemannSurfaceModel)
 
 Compute the small period matrix for the Riemann surface.
 """
-function small_period_matrix(RS::RiemannSurface)
+function small_period_matrix(RS::RiemannSurfaceModel)
   if isdefined(RS, :small_period_matrix)
     return RS.small_period_matrix
   end
@@ -471,14 +443,14 @@ function small_period_matrix(RS::RiemannSurface)
   P = big_period_matrix(RS)
   P1 = P[1:g, 1:g]
   P2 = P[1:g, g+1:2*g]
-  P1_inv = P1^(-1)
-  small_period_matrix = P1_inv*P2
+  P1_inv = _inv_precond(P1)
+  small_period_matrix = _solve_precond(P1, P2)   # better than P1_inv * P2
   RS.small_period_matrix = small_period_matrix
   RS.complex_reduction_matrices = [P1_inv]
   return small_period_matrix
 end
 
-function compute_reduction_matrix(RS::RiemannSurface, type::String)
+function compute_reduction_matrix(RS::AbstractRiemannSurfaceModel, type::String)
   g = genus(RS)
   @req (type == "real" || type =="complex") "Type has to be either 'real' or 'complex'."
   if type == "real" && !isdefined(RS, :real_reduction_matrix)
@@ -493,289 +465,27 @@ function compute_reduction_matrix(RS::RiemannSurface, type::String)
         M[j+g,k+g] = imag(P[j,k+g])
       end
     end
-    RS.real_reduction_matrix = M^(-1)
+    RS.real_reduction_matrix = _inv_precond(M)
   else
     tau = small_period_matrix(RS)
     CC = base_ring(tau)
     if length(RS.complex_reduction_matrices) == 1
       i_tau = imag(tau)
-      push!(RS.complex_reduction_matrices, change_base_ring(CC,i_tau^(-1)))
+      push!(RS.complex_reduction_matrices, change_base_ring(CC, _inv_precond(i_tau)))
     end
   end
 end
 
-# Computes the bound M for every path. The bound M is the maximum value of
-# the integrands along the boundary of the ellipse with radius r.
-# (Cf. Neurohr's thesis 4.7.2, page 87 - 88)
-function compute_ellipse_bound(subpath::CPath, differentials_test, int_group_rs, RS::RiemannSurface)
-
-  num_of_int_groups = length(int_group_rs)
-  if length(subpath.bounds) == 0
-    i = maximum(filter(x -> (subpath.int_param_r > int_group_rs[x]), 1:num_of_int_groups);init = 1)
-    subpath.integration_scheme_index = i
-    r = int_group_rs[i]
-
-    v = embedding(RS)
-    prec = precision(RS)
-    RR = ArbField(prec)
-    f = embed_mpoly(defining_polynomial(RS), v, prec)
-    CC = base_ring(f)
-    I = onei(CC)
-    f = change_base_ring(CC, f, parent = parent(f))
-
-    Kxy = parent(f)
-    Ky, y = polynomial_ring(base_ring(Kxy), "y")
-
-    piC = const_pi(CC)
-    piR = const_pi(RR)
-
-    #This should be done in a more clever way by sampling with less points with
-    #bigger radius in the beginning and then zooming in
-    n = 2000
-    test_points = [CC(k*2*piC/n) for k in 0:n-1]
-
-    b = sqrt(r^2-1)
-
-    max_bound_t = []
-      for t in test_points
-        #radius = piR/n
-        #ccall((:acb_add_error_arb, Hecke.libflint), Cvoid, (Ref{AcbFieldElem},
-        #Ref{ArbFieldElem}), t, radius)
-        e_t = r*cos(t) + b*sin(t)*I
-
-
-        x_ball = evaluate(subpath, e_t)
-        ys = roots(f(x_ball, y), initial_prec = prec)
-        #g = RS.evaluate_differential_factors_matrix
-        #bounds_matrix = g(differentials_test, x_ball, ys)
-        bounds_matrix *= evaluate_d(subpath, e_t)
-        max_bound_t = push!(max_bound_t, 10 * maximum([RR(abs(v)) for
-        v in bounds_matrix]; init = RR(0)))
-      end
-      max_bound = maximum(max_bound_t)
-      push!(subpath.bounds, max_bound)
-
-  else
-    subpath.integration_scheme_index = num_of_int_groups
+# true iff all pairwise distances of the points are at least 2^(-bits) relative
+# to their size, i.e. |a - b| >= 2^(-bits) * max(1, |a|, |b|).
+function _resolvable_at(points::Vector{AcbFieldElem}, bits::Int)
+  n = length(points)
+  for i in 1:n, j in i+1:n
+    a, b = points[i], points[j]
+    scale = max(1.0, _arb_mid_f64(abs(a)), _arb_mid_f64(abs(b)))
+    d = abs(a - b)
+    # compare with an upper bound for |a - b|
+    _arb_mid_f64(d) + _arb_mid_f64(radius(d)) < ldexp(scale, -bits) && return false
   end
-end
-
-###  The following function compute_ellipse_bound_rigorous, together with the function construct_M,
-###  are an implementation of the algorithm for rigorous integration along straight lines by Nils Bruin, Linden
-###  Disney-Hogg, and Wuqian Effie Gao, as presented in https://arxiv.org/pdf/2208.12377. The implementation 
-###  here is Strategy 1 from this paper.
-function compute_ellipse_bound_rigorous(subpath, dif_basis, int_group_rs, RS)
-  if length(subpath.bounds) == 0
-    i = maximum(filter(x -> (subpath.int_param_r > int_group_rs[x]), 1:length(int_group_rs));init = 1)
-    subpath.integration_scheme_index = i
-  else 
-    i = length(int_group_rs)
-    subpath.integration_scheme_index = i
-    return false 
-  end
-
-  v_start = start_point(subpath)
-  v_end = end_point(subpath)
-
-  #these values are the 't values' of the discriminant points 
-  rs = [(2 * alpha - (v_start + v_end))/(v_end - v_start) for alpha in internal_discriminant_points(RS)]
-
-  for g in dif_basis
-    interval = [-1]
-    current_endpoint = 1
-    gmin = minpoly(g)
-    while (interval[end] != 1)
-      mid = (1//2) * (interval[end] + current_endpoint)
-      if minimum([abs(alpha - mid) for alpha in rs]) > (1//2) * abs(current_endpoint - interval[end])
-        push!(interval, current_endpoint)
-        current_endpoint = 1
-      else 
-        current_endpoint = (1//2) * (current_endpoint + interval[end])
-      end
-    end
-    M_tilde_values = []
-
-    for j in (2:length(interval))
-      z_0 = (interval[j] + interval[j-1])/2
-      delta = minimum([abs(alpha - z_0) for alpha in rs]) + (abs(interval[j] - interval[j-1]))/2 
-      lis = [denominator(coeff(gmin, i)) for i in (0:degree(gmin))]
-      gmin = lcm(lis) * gmin
-      CC = complex_field(RS)
-      v = embedding(RS)
-      _, CCx = polynomial_ring(CC, "x")
-      coeffs = [numerator(coeff(gmin_int,i)) for i in (0:degree(gmin_int))]
-      #precompose with the path
-      #the coefficients in the minimal polynomial of g are rational functions from the path P to CC.
-      #The paper [BDG24] requires this equation to hold on [-1,1]. The straight path P is encoded as a fucntion [-1,1] -> P 
-      #so in order to get an equation on [-1,1] we precompose the coefficients with the formula for the straight path. 
-      if base_ring(base_ring(parent(gmin_int))) == QQ
-        coeffs = [sum(CC(coeff(a,i)) * ( (CCx+1)*v_end/2 + (1-CCx)*v_start/2 )^i for i in (0:length(coefficients(a)))) for a in coeffs]
-      else 
-        coeffs = [sum(CC(embeddings(v)[1](coeff(a,i))) * ( (CCx+1)*v_end/2 + (1-CCx)*v_start/2 )^i for i in (0:length(coefficients(a)))) for a in coeffs]
-      end 
-
-      A_0 = CC(abs((coeff(coeffs[end], degree(coeffs[end]))) ) * prod( [abs(z_0 - alpha) - delta for alpha in rs] , init = one(CC)))
-      A_i = [ (sum([CC(abs(coeff(a, i)) * (abs(z_0) + delta)^i) for i in (0:length(coefficients(a)))], init = zero(CC))) for a in coeffs[1:end - 1] ]
-
-      M_tilde = 2 * maximum([ real((A_i[i]/A_0)^(1/i)) for i in (1:length(A_i)) ])
-
-      push!(M_tilde_values, M_tilde)
-    end
-    push!(subpath.bounds, maximum(M_tilde_values))
-  end
-end 
-
-function compute_ellipse_bound_heuristic(subpath::CPath, differentials_test::Vector{ AbstractAlgebra.Generic.MPoly{AcbFieldElem}}, int_group_rs::Vector{ArbFieldElem}, RS::RiemannSurface)
-  num_of_int_groups = length(int_group_rs)
-  if length(subpath.bounds) == 0
-    i = maximum(filter(x -> (subpath.int_param_r > int_group_rs[x]), 1:num_of_int_groups);init = 1)
-    subpath.integration_scheme_index = i
-    r = int_group_rs[i]
-
-    v = embedding(RS)
-    prec = precision(RS)
-    RR = ArbField(prec)
-    f = embed_mpoly(defining_polynomial(RS), v, prec)
-    CC = base_ring(f)
-    I = onei(CC)
-    f = change_base_ring(CC, f, parent = parent(f))
-
-    Kxy = parent(f)
-    Ky, y = polynomial_ring(base_ring(Kxy), "y")
-
-    piC = const_pi(CC)
-    piR = const_pi(RR)
-	  b = sqrt(r^2-1)
-    x = subpath.t_of_closest_d_point
-
-	if abs(imag(x)) < RR(10^-10)
-		xr = sign(Int, real(x))*r
-  elseif abs(real(x)) < RR(10^-10)
-		xr = sign(Int, imag(x))*b*I
-	else
-
-	  im_sign = sign(Int, imag(x))
-	  re_sign = sign(Int, real(x))
-
-	  xa = abs(real(x)) + I*abs(imag(x))
-	  s = function(t)
-		  return cos(t)*sin(t)-r*real(xa)*sin(t)+b*imag(xa)*cos(t)
-	  end
-
-	  sp = function(t)
-		  return (cos(t)^2 - sin(t)^2) - r*real(xa)*cos(t) - b*imag(xa)*sin(t)
-	  end
-    nt = real(acos(xa))
-	  t = nt - s(nt)/sp(nt)
-	  while abs(t-nt) > 10^-3
-		  nt = t
-		  t -= s(t)/sp(t)
-    end
-	  xr = re_sign * r*cos(t) + im_sign*I*b*sin(t)
-  end
-
-   x_ball = evaluate(subpath, xr)
-   ys = roots(f(x_ball, y), initial_prec = prec)
-   bounds_matrix = evaluate_differential_factors_matrix(RS, differentials_test, x_ball, ys)
-   bounds_matrix *= evaluate_d(subpath, xr)
-   max_bound = 10 * maximum([RR(abs(v)) for v in bounds_matrix]; init = RR(0))
-   push!(subpath.bounds, max_bound)
-
-  else
-    subpath.integration_scheme_index = num_of_int_groups
-  end
-end
-
-
-function compute_burger_bound_heuristic(subpath::CPath, differentials_test, int_group_rs, RS::RiemannSurface, lambda::ArbFieldElem = const_pi(parent(int_group_rs[1]))/2, ss::Int = 20)
-  
-  num_of_int_groups = length(int_group_rs)
-  if length(subpath.bounds) == 0
-    i = maximum(filter(x -> (subpath.int_param_r > int_group_rs[x]), 1:num_of_int_groups);init = 1)
-    subpath.integration_scheme_index = i
-    r = int_group_rs[i]
-
-    v = embedding(RS)
-    prec = precision(RS)
-    RR = ArbField(prec)
-    f = embed_mpoly(defining_polynomial(RS), v, prec)
-    CC = base_ring(f)
-    I = onei(CC)
-    f = change_base_ring(CC, f, parent = parent(f))
-
-    Kxy = parent(f)
-    Ky, y = polynomial_ring(base_ring(Kxy), "y")
-
-    piC = const_pi(CC)
-    piR = const_pi(RR)
-	  b = sqrt(r^2-1)
-    x = subpath.t_of_closest_d_point
-
-    CC = parent(x)
-    I = onei(CC)
-    phi = function(t::AcbFieldElem)
-      return tanh(lambda*sinh(t + I*r))
-    end
-    if abs(real(x)) < RR(10)^-10
-        xr = sign(Int, imag(x)) * phi(CC(0))
-    else 
-      xt = abs(real(x)) + I * abs(imag(x))
-      tmax = acosh(const_pi(CC)/(2*lambda*sin(r)))
-      xr = phi(CC(0))
-      min_dist = abs(xt-xr)
-      for k in (1:ss)
-        t = k/ss*tmax
-        z = phi(t)
-        dist = abs(xt-z)
-        if dist < min_dist
-          min_dist = dist
-          xr = z
-        end
-      end
-      if abs(imag(x)) < RR(10)^-10
-        xr = sign(Int, real(x)) * real(xr) + I * imag(xr)
-      else
-        xr = sign(Int, real(x)) * real(xr) + I * sign(Int, imag(x))*imag(xr)
-      end
-    end
-
-    for tj in [CC(-1), CC(1), CC(xr)]
-      x_ball = evaluate(subpath, tj)
-      ys = roots(f(x_ball, y), initial_prec = prec)
-      bounds_matrix = evaluate_differential_factors_matrix(RS, differentials_test, x_ball, ys)
-      bounds_matrix *= evaluate_d(subpath, tj)
-      max_bound = 10 * maximum([RR(abs(v)) for v in bounds_matrix]; init = RR(0))
-    push!(subpath.bounds, max_bound)
-    end
-  else
-    subpath.integration_scheme_index = num_of_int_groups
-  end
-end
-
-function acos(x::AcbFieldElem)
-  z = parent(x)()
-  prec = precision(parent(x))
-  @ccall libflint.acb_acos(z::Ref{AcbFieldElem}, x::Ref{AcbFieldElem}, prec::Int)::Nothing
-  return z
-end
-
-function atanh(x::AcbFieldElem)
-  z = parent(x)()
-  prec = precision(parent(x))
-  @ccall libflint.acb_atanh(z::Ref{AcbFieldElem}, x::Ref{AcbFieldElem}, prec::Int)::Nothing
-  return z
-end
-
-function asinh(x::AcbFieldElem)
-  z = parent(x)()
-  prec = precision(parent(x))
-  @ccall libflint.acb_asinh(z::Ref{AcbFieldElem}, x::Ref{AcbFieldElem}, prec::Int)::Nothing
-  return z
-end
-
-function acosh(x::AcbFieldElem)
-  z = parent(x)()
-  prec = precision(parent(x))
-  @ccall libflint.acb_acosh(z::Ref{AcbFieldElem}, x::Ref{AcbFieldElem}, prec::Int)::Nothing
-  return z
+  return true
 end

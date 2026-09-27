@@ -18,197 +18,6 @@ get_t_of_closest_d_point, evaluate_d
 #
 ################################################################################
 
-#The class Cpath represents a path in the complex plane. It can be either
-# a line, an arc, a circle, a point or a line to infinity.
-
-mutable struct CPath
-
-  path_type::Int
-  #Path type index:
-  #0 is a line
-  #1 is an arc
-  #2 is a circle
-  #3 is a point
-
-  #The field in which the path lies
-  C::AcbField
-
-  #The start point and the end point of the path
-  start_point::AcbFieldElem
-  end_point::AcbFieldElem
-
-  #The start point and the end point of the path with higher precision
-  start_point_high::AcbFieldElem
-  end_point_high::AcbFieldElem
-
-  #If the path is an arc or a circle, it will be described by the center,
-  #the radius, and the start and end angles. (c + r*e^(ix))
-  center::AcbFieldElem
-  radius::ArbFieldElem
-  start_arc::ArbFieldElem
-  end_arc::ArbFieldElem
-
-  center_high::AcbFieldElem
-  radius_high::ArbFieldElem
-  start_arc_high::ArbFieldElem
-  end_arc_high::ArbFieldElem
-
-  #The orientation determines how we move from start point to end point
-  #If the orientation is 1 we move counterclockwise and if the orientation
-  # is -1 we move clockwise.
-  orientation::Int
-
-  #The length of the path
-  length::ArbFieldElem
-  length_high::ArbFieldElem
-
-
-  #Let f be the equation defining a plane curve in RiemannSurface.jl
-  #Let x_0 = gamma(start_point) and let (y_1, ..., y_d) be the roots
-  #of the equation f(x_0, y) sorted by the sheet_ordering function
-  #from Auxiliary.jl. Using analytic continuation along the path gamma
-  #to x_end = gamma(end_point) gives us a new set of roots (z_1, ..., z_d)
-  #solving f(x_end, y). Sorting these once again using the sheet_ordering
-  #function gives us a permutation (z_sigma(1), ..., z_sigma(d)). The variable
-  #sigma stores this permutation. In the case that gamma is a closed path,
-  #sigma will tell us exactly how the sheets got permuted.
-  permutation::Perm{Int}
-
-  sheets::Vector{AcbFieldElem}
-
-  #For the purposes of integrating along a path to compute the period matrix
-  #we store additional properties. Here is a description
-  #of their meanings. Most of these are discussed in  Chapter 3
-  #of Neurohr's thesis.
-
-
-  integration_scheme::String
-
-  #For integration we want the function f we integrate along gamma to be
-  #bounded. For this we take an ellipsoid e_r with focal points -1,1
-  #paramatrized by r*cos(t) + i*sqrt(1-r^2) which contains the path gamma.
-  #And then we determine an M such that |gamma(e_r)|< M.
-  #During computations we determine an optimal r to find proper error bounds
-  #This r is stored with the path and called int_param_r.
-  int_param_r::ArbFieldElem
-
-  #Let D be the set of points where disc(f) = 0. Let P be the point in D
-  #for which the distance between gamma and P is minimal. Now
-  #t_of_closest_d_point is the variable t0 for which gamma(t0) = P.
-  t_of_closest_d_point::AcbFieldElem
-
-  #The number of abscissae of the path
-  int_params_N::ZZRingElem
-
-  #The bounds M computed
-  bounds::Vector{ArbFieldElem}
-
-  #The index of the integration scheme that should be used to compute the
-  #integral along this path
-  integration_scheme_index::Int
-
-  #If the path is long it, splitting it it into subpaths and computing
-  #integrals along those subpaths may be faster.
-  sub_paths::Vector{CPath}
-
-  #Let X be a Riemann surface X defined by an equation f(x,y) = 0.
-  #Let g be the genus of X, and let m be the degree of the map pi:X -> P^1
-  #given by (x,y)-> x. Then integral_matrix will is the m x g matrix one gets
-  #by integrating the g differential forms forming a basis of H^0(X, K_X)
-  #(computed in RiemannSurface.jl) along the m distinct paths that are lifts
-  #of gamma along pi.
-  integral_matrix::AcbMatrix
-
-
-  #Constructor of CPath.
-  function CPath(a::AcbFieldElem, b::AcbFieldElem, path_type::Int, CC_low::AcbField = parent(a), c::AcbFieldElem = zero(parent(a)), radius::ArbFieldElem = real(zero(parent(a))), orientation::Int = 1)
-
-    P = new()
-    RR_low = ArbField(precision(CC_low))
-    CC = parent(a)
-    P.C = CC
-
-    P.start_point_high = a
-    P.end_point_high = b
-
-    A = CC_low(a)
-    B = CC_low(b)
-
-    P.start_point = A
-    P.end_point = B
-    
-    P.path_type = path_type
-
-    P.center_high = c
-    P.radius_high = radius
-
-
-    P.center = CC_low(c)
-    P.radius = RR_low(radius)
-    P.orientation = orientation
-    P.bounds = ArbFieldElem[]
-
-    RR = ArbField(precision(CC))
-
-    if path_type == 0
-      length = abs(B - A)
-    end
-
-    if path_type == 3
-      length = RR_low(0)
-    end
-
-    if path_type == 4
-      P.end_point = CC(1/0)
-      length = RR(1/0)
-    end
-  
-    #If the path is not a line we need some additional constants to compute
-    #length, parametrization, etc.
-    i = onei(CC)
-    piC = real(const_pi(CC))
-
-    #Round real or imaginary part to zero to compute angle if necessary
-    #zero_sens = floor(Int, prec*log(2)/log(10)) - 5
-
-    a_diff = trim_zero(a - c)
-    b_diff = trim_zero(b - c)
-
-    #a_diff = trim_zero(a - c, zero_sens)
-    #b_diff = trim_zero(b - c, zero_sens)
-
-    phi_a = mod2pi(angle(a_diff))
-    phi_b = mod2pi(angle(b_diff))
-
-
-    if orientation == 1
-      if phi_b < phi_a
-        phi_b += 2*piC
-      end
-    elseif orientation == - 1
-       if phi_a < phi_b
-        phi_a += 2*piC
-      end
-    end
-
-    P.start_arc = phi_a
-    P.end_arc = phi_b
-
-    #If the path is an arc
-    if path_type == 1
-      length = abs((phi_b - phi_a)) * radius
-    end
-
-    #If the path is a circle
-    if path_type == 2
-      length = 2 * piC * radius
-    end
-
-    P.length = length
-    return P
-  end
-end
-
 @doc raw"""
 c_line(start_point::AcbFieldElem, end_point::AcbFieldElem) -> CPath
 
@@ -278,7 +87,6 @@ end
 #
 ################################################################################
 
-
 function show(io::IO, gamma::CPath)
   CC = AcbField(30)
   RR = ArbField(30)
@@ -317,23 +125,18 @@ Given a path G:[-1,1] -> C returns the reverse of the path
 G_rev:[-1,1] -> C defined by G_rev(t) = G(-t).
 """
 function reverse(G::CPath)
-
-  p_type = path_type(G)
-
-  if p_type == 0
+  if isdefined(G, :reverse_path)
+    return G.reverse_path
+  end
+  if path_type(G) == 0
     G_rev = c_line(G.end_point_high, G.start_point_high)
   else #Circle or arc
     G_rev = c_arc(G.end_point_high, G.start_point_high, G.center_high, orientation = -orientation(G))
   end
-  
-  if isdefined(G, :permutation)
-    assign_permutation(G_rev, inv(permutation(G)))
-  end
-
-  if isdefined(G, :integral_matrix)
-    G_rev.integral_matrix =  permutation(G) * -G.integral_matrix
-  end
-
+  G_rev.reverse_path = G
+  G.reverse_path = G_rev
+  isdefined(G, :permutation)     && (G_rev.permutation = inv(G.permutation))
+  isdefined(G, :integral_matrix) && _set_reverse_integral!(G)
   return G_rev
 end
 
@@ -342,7 +145,6 @@ end
 #  Getters and setters
 #
 ################################################################################
-
 
 function path_type(G::CPath)
   return G.path_type
@@ -363,7 +165,6 @@ end
 function end_arc(G::CPath)
   return G.end_arc
 end
-
 
 function center(G::CPath)
   if 1 <= path_type(G) <= 2
@@ -389,8 +190,23 @@ function orientation(G::CPath)
   return G.orientation
 end
 
-function assign_permutation(G::CPath, permutation::Perm{Int})
-  G.permutation = permutation
+function assign_permutation(G::CPath, sigma::Perm{Int})
+  G.permutation = sigma
+  if isdefined(G, :reverse_path)
+    G.reverse_path.permutation = inv(sigma)
+  end
+end
+
+function assign_integral_matrix(G::CPath, M::AcbMatrix)
+  G.integral_matrix = M
+  isdefined(G, :reverse_path) && _set_reverse_integral!(G)
+end
+
+function _set_reverse_integral!(G::CPath)
+  M = G.integral_matrix
+  if isdefined(G, :permutation) && nrows(M) == parent(G.permutation).n
+    G.reverse_path.integral_matrix = G.permutation * -M
+  end
 end
 
 function permutation(G::CPath)
@@ -428,7 +244,6 @@ end
 function get_subpaths(G::CPath)
   return G.sub_paths
 end
-
 
 ################################################################################
 #
@@ -468,10 +283,9 @@ function evaluate(G::CPath, t::FieldElem)
 
   CC = parent(A)
   i = onei(CC)
-  
 
   if path_type == 1
-    return c + radius * exp(i * ((phi_a + phi_b)//2 + (phi_b - phi_a)//2 * orientation * t))
+    return c + radius * exp(i * ((phi_a + phi_b)//2 + (phi_b - phi_a)//2 * t))
   end
     #If the path is a circle
   if path_type == 2
@@ -514,7 +328,7 @@ function evaluate_d(G::CPath, t::FieldElem)
   i = onei(CC)
   
   if path_type == 1
-    return i * (phi_b - phi_a)//2 * orientation * radius * exp(i * ((phi_a + phi_b)//2 + (phi_b - phi_a)//2 * orientation * t))
+    return i * (phi_b - phi_a)//2 * radius * exp(i * ((phi_a + phi_b)//2 + (phi_b - phi_a)//2 * t))
   end
 
 #If the path is a circle
@@ -607,7 +421,6 @@ function intersection_points(line::CPath,circle::CPath)
     orth_proj_dist = abs(a - orth_proj)
     D = sqrt(r^2 - center_dist^2)
 
-
     #Use Pythagoras to find the intersection points
     first_point_dist = orth_proj_dist - D
     max_dist = length(line)
@@ -632,59 +445,22 @@ function intersection_points(line::CPath,circle::CPath)
   end
 end
 
-#The class CChain represents a concatenation of CPaths.
-
-mutable struct CChain
-  paths::Vector{CPath}
-  permutation::Perm{Int}
-  sheets::Vector{AcbFieldElem}
-  is_closed::Bool
-  start_point::AcbFieldElem
-  end_point::AcbFieldElem
-  integral_matrix::AcbMatrix
-  center::AcbFieldElem
-  points
-
-  #Constructor of CChain.
-  function CChain(paths::Vector{CPath})
-
-    is_connected, is_closed = test_chain(paths)
-
-    @req is_connected "A chain should consist of a connected sequence of paths."
-
-    C = new()
-    C.paths = paths
-    C.is_closed = is_closed
-    C.start_point = start_point(paths[1])
-    C.end_point = end_point(paths[end])
-
-    if all([isdefined(path, :permutation) for path in paths])
-      C.permutation = prod(map(permutation, paths))
-      s_m = parent(C.permutation)
-      m = s_m.n
-      if all([isdefined(path, :integral_matrix) for path in paths])
-        CC = base_ring(paths[1].integral_matrix)
-        g = ncols(paths[1].integral_matrix)
-        chain_integral = zero_matrix(CC, m, g)
-        sigma = one(s_m)
-        for path in paths
-          # Sheets are permuted after moving along path, so we need to add a
-          # permuted matrix.
-          chain_integral += inv(sigma) * change_base_ring(CC,path.integral_matrix)
-          sigma *= permutation(path)
-        end
-        C.integral_matrix = chain_integral
-      end
-    end
-    return C
+# Integral matrix of a chain from those of its paths. Sheets are permuted
+# after moving along a path, so the matrix of each path is added permuted.
+function _set_chain_integral!(C::CChain)
+  paths = C.paths
+  s_m = parent(C.permutation)
+  m = s_m.n
+  CC = base_ring(paths[1].integral_matrix)
+  g = ncols(paths[1].integral_matrix)
+  chain_integral = zero_matrix(CC, m, g)
+  sigma = one(s_m)
+  for path in paths
+    chain_integral += inv(sigma) * change_base_ring(CC, path.integral_matrix)
+    sigma *= permutation(path)
   end
-
-  function CChain(paths::Vector{CPath}, c::AcbFieldElem)
-    C = CChain(paths)
-    C.center = c
-    return C
-  end
-
+  C.integral_matrix = chain_integral
+  return C
 end
 
 function length(chain::CChain)
@@ -760,12 +536,23 @@ function show(io::IO, chain::CChain)
   end
 end
 
+# The loop around infinity as the product of the inverses of the loops around
+# all discriminant points (in reverse order), freely reduced: a path followed
+# by its reverse cancels. The reduced word is the walk around the spanning tree
+# (every line piece twice, every arc once), instead of the sum of all chains,
+# where the pieces near the base point occur once per discriminant point
+# behind them; this matters for the radius of its integral. The loops with
+# trivial monodromy do not change the permutation, and their integrals vanish.
 function make_inf_chain(chains::Vector{CChain})
   paths = CPath[]
   CC = parent(start_point(chains[1].paths[1]))
-  for chain in reverse(chains)
-    new_paths = reverse([reverse(p) for p in chain.paths ])
-    paths = vcat(paths, new_paths)
+  for chain in reverse(chains), p in reverse(chain.paths)
+    q = reverse(p)
+    if !isempty(paths) && paths[end] === p
+      pop!(paths)                          # p followed by reverse(p)
+    else
+      push!(paths, q)
+    end
   end
 
   inf_chain = CChain(paths)
