@@ -5,6 +5,7 @@
 @testset "RieSrf" begin
   include("RieSrf/TestHelpers.jl")
   include("RieSrf/Numerics/IntegrationParameters.jl")
+  include("RieSrf/Numerics/NumericalKernel.jl")
   include("RieSrf/Paths/CPath.jl")
   include("RieSrf/Paths/AnalyticContinuation.jl")
   include("RieSrf/Surface/RiemannSurface.jl")

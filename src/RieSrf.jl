@@ -36,6 +36,7 @@ import Nemo: acb_struct, acb_vec, acb_vec_clear, array
 
 include("RieSrf/Numerics/ArbHelpers.jl")
 include("RieSrf/Numerics/Auxiliary.jl")
+include("RieSrf/Numerics/NumericalKernel.jl")
 include("RieSrf/Numerics/IntegrationParameters.jl")
 include("RieSrf/Types.jl")
 include("RieSrf/Paths/CPath.jl")
