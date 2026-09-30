@@ -50,7 +50,7 @@ import AbstractAlgebra:
 
 import AbstractAlgebra: Solve, coprime_base_steel, InfiniteDimensionError
 
-import LinearAlgebra: dot, nullspace, rank, ishermitian
+import LinearAlgebra: dot, nullspace, rank, ishermitian, svd
 
 import SparseArrays: nnz
 
