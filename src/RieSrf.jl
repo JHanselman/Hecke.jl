@@ -22,6 +22,7 @@ approximate_minimal_polynomial, algebraize_element, complex_structure,
 rational_homomorphism_equations, geometric_endomorphism_representation, 
 geometric_endomorphism_representation
 
+export char_to_index, odd_theta_characteristics, construct_fay_matrix, lift_prym_indices
 
 import Hecke.AbstractAlgebra, Hecke.Nemo
 import Hecke.AbstractAlgebra.is_terse
@@ -63,4 +64,8 @@ include("RieSrf/Periods/Superelliptic.jl")
 include("RieSrf/Endomorphisms/HeuristicEndomorphisms.jl")
 include("RieSrf/Endomorphisms/Algebraization.jl")
 include("RieSrf/Endomorphisms/EndomorphismStructure.jl")
+include("RieSrf/Reconstruction/ReconstrucCurveAuxiliary.jl")
+include("RieSrf/Reconstruction/RiemannRelations.jl")
+include("RieSrf/Reconstruction/SignCorrection.jl")
+include("RieSrf/Reconstruction/ThetaCorrections.jl")
 end

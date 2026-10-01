@@ -68,7 +68,7 @@ end
 
 bigM_float = (x->Complex{Float64x2}(Complex{BigFloat}(x))).(collect(matrix(bigM)[:,odd_indices]))
 K = manual_kernel(bigM_float;prec = :x2)[1]
-K = permutedims(nullspace(bigM_float))
+#K = permutedims(nullspace(bigM_float))
 
 
 bigM_float_prym = Complex{BigFloat}.(collect(matrix(bigM_prym)[:,odd_prym_indices]))
