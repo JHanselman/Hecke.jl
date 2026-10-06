@@ -1,2233 +1,579 @@
+################################################################################
+#
+#  ReconstructG4.jl : genus 4 curves from their theta constants
+#
+#  Hanselman, Pieper, Schiavone, "Equations of genus 4 curves from their
+#  theta constants" (arXiv:2402.03160), following the Magma package
+#  reconstructing-g4 (magma/reconstruction.m). The case is decided by the
+#  number of vanishing even theta constants of the (Siegel reduced) tau:
+#
+#   0   generic: the tritangent planes H_i, H_i' (generalized Jacobi
+#       derivative formula, the tables of ReconstructG4Tables.jl),
+#       the bitangents l_i of the Prym (Schottky-Jung and Aronhold-Weber),
+#       the map phi with phi(H_i H_i') = lambda_i l_i^2, the quadric
+#       Q = ker(phi) and the Cayley cubic Gamma with Gamma^2 = det(Delta);
+#   1   one vanishing theta null (the quadric is a cone): tau is transformed
+#       so that the vanishing characteristic is (0,1,1,1,0,1,0,1); then the
+#       Prym is hyperelliptic and its bitangents are replaced by the lines
+#       through pairs of its Weierstrass points (Remark 4.5); otherwise as in
+#       the generic case (the Cayley cubic is also exact here);
+#   10  hyperelliptic: Rosenhain invariants by Takase's formula.
+#
+#  Characteristics are bit tuples (a1, ..., a4, b1, ..., b4), the keys of
+#  theta_constants. Uses ThetaCharacteristics.jl, ReconstructCurvesG123.jl
+#  (Takase's quotients, Weber moduli, the genus 3 signs and bitangents),
+#  ReconstructNumerics.jl (square roots of forms) and ReconstructG4Tables.jl;
+#  the tests and comparisons are in ReconstructG4Tests.jl.
+#
+#  Usage:
+#    r = reconstruct_curve_g4_data(small_period_matrix(RS))
+#    r.case, r.curve     # [quadric, cubic] in P^3, or a hyperelliptic curve
+#    check_g4_reconstruction(f, 300)    # compares with the curve f(x, y) = 0
+#    reconstruct_rational_curve_g4(big_period_matrix(RS))   # a model over QQ
+#
+################################################################################
 
-function reconstruct_g4_curve_from_bi_tri_tangents(bitangents, tritangents)
-  r = length(tritangents)
+@doc raw"""
+    reconstruct_curve_g4(tau::AcbMatrix)
+
+A model of the genus 4 curve with small period matrix `tau`: `[quadric,
+cubic]` (polynomials in four variables over the complex field of `tau`) for a
+non-hyperelliptic curve, or a hyperelliptic curve y^2 = x (x-1) prod (x -
+lambda_l) over that field.
+"""
+reconstruct_curve_g4(tau::AcbMatrix) = reconstruct_curve_g4_data(tau).curve
+
+@doc raw"""
+    reconstruct_curve_g4_data(tau::AcbMatrix) -> NamedTuple
+
+The reconstruction together with the data needed to check it: `case`
+(`:generic`, `:vanishing_theta_null` or `:hyperelliptic`), `curve`, `tau`
+(the period matrix actually used, `transform`(tau) as in
+`Hecke.siegel_transform`), `transform` (a symplectic 8 x 8 matrix) and
+`info` (numerical diagnostics, log2 of relative sizes; see
+`_g4_curve_from_tangents`).
+
+The balls of the result contain the exact curve for every tau in the balls of
+`tau` (ball arithmetic through all steps; the kernels assume the ranks the
+theory predicts). They are pessimistic: for non-hyperelliptic curves the
+radii are about 2^110 to 2^150 times the radius of tau, for hyperelliptic
+curves a few bits. For a result with relative radius 2^-p, compute tau with
+about p + 150 bits (resp. p + 10). This is much cheaper than first-order
+certification with the theta derivatives (tried, see the git history: the
+second order theta jets alone cost more than 10 times the reconstruction).
+"""
+function reconstruct_curve_g4_data(tau::AcbMatrix)
+  @req nrows(tau) == 4 && ncols(tau) == 4 "tau must be a 4 x 4 matrix."
+  T, tau_red = Hecke.siegel_reduction(tau)
+  return _g4_reconstruct_reduced(tau_red, T, precision(base_ring(tau)))
+end
+
+# The reconstruction from a reduced tau (T: the transformation of the
+# reduction); prec: the precision of the original tau (for the vanishing
+# theta constants).
+function _g4_reconstruct_reduced(tau_red::AcbMatrix, T::ZZMatrix, prec::Int)
+  th = theta_constants(tau_red)
+  vanishing = _vanishing_even_theta_constants(th, prec)
+  if isempty(vanishing)
+    quadric, cubic, info = _g4_generic(th)
+    info = merge(info, (radius_thetas = _log2_relative_radius([th[c] for c in keys(th) if _is_even(c)]),))
+    return (case = :generic, curve = [quadric, cubic], tau = tau_red, transform = T, info = info,
+            vanishing = vanishing, move = identity_matrix(ZZ, 8))
+  elseif length(vanishing) == 1
+    M, tau2, th2 = _g4_move_vanishing_characteristic(tau_red, vanishing[1], prec)
+    quadric, cubic, info = _g4_vanishing_theta_null(th2)
+    info = merge(info, (radius_thetas = _log2_relative_radius([th2[c] for c in keys(th2) if _is_even(c)]),))
+    return (case = :vanishing_theta_null, curve = [quadric, cubic], tau = tau2,
+            transform = M * T, info = info, vanishing = vanishing, move = M)
+  elseif length(vanishing) == 10
+    X, info = _g4_hyperelliptic(th, vanishing)
+    return (case = :hyperelliptic, curve = X, tau = tau_red, transform = T, info = info,
+            vanishing = vanishing, move = identity_matrix(ZZ, 8))
+  end
+  error("$(length(vanishing)) even theta constants vanish; expected 0 (generic), 1 (vanishing theta null) or 10 (hyperelliptic). Is the Jacobian decomposable, or the precision too low?")
+end
+
+################################################################################
+#
+#  The three cases
+#
+################################################################################
+
+function _g4_generic(th)
+  tritangents = _g4_tritangents(th)
+  bitangents = _g4_prym_bitangents(th)
+  # the bitangents l_i of the Prym corresponding to the pairs (H_i, H_i')
+  # (Milne's bijection), in the numbering of _aronhold_bitangents
+  selected = [bitangents[i] for i in _g4_prym_bitangent_selection()]
+  return _g4_curve_from_tangents(tritangents, selected)
+end
+
+# As in the generic case; the Cayley cubic (Lemma 3.8) also works when the
+# quadric is a cone, so no square root modulo the cone is needed (Magma:
+# ComputeCurveVanTheta0 with ComputeSquareRootOnCone).
+function _g4_vanishing_theta_null(th)
+  tritangents = _g4_tritangents(th)
+  lines = _g4_hyperelliptic_prym_lines(th)
+  selected = [lines[i] for i in _g4_weierstrass_line_selection()]
+  return _g4_curve_from_tangents(tritangents, selected)
+end
+
+# The 10 vanishing even characteristics are eta_U + eta_i (i = 1..10, eta_10 = 0
+# for the branch point at infinity), so eta_i = v_i + v_10 for any numbering
+# v_1, ..., v_10 (a numbering of the branch points).
+function _g4_hyperelliptic(th, vanishing)
+  CC = parent(th[ntuple(_ -> 0, 8)])
+  lambdas = _g4_rosenhain(th, vanishing)
+  CCx, x = polynomial_ring(CC, :x; cached = false)
+  f = x*(x - 1)*prod(x - l for l in lambdas)
+  return hyperelliptic_curve(f), (rosenhain = lambdas,)
+end
+
+# The Rosenhain invariants lambda_3..lambda_9
+function _g4_rosenhain(th, vanishing)
+  v = sort([collect(c) for c in vanishing])
+  eta = [mod.(v[i] + v[10], 2) for i in 1:9]
+  push!(eta, zeros(Int, 8))
+  U = union([i for i in 1:10 if _is_odd_characteristic(eta[i])], [10])
+  eta_U = mod.(sum(eta[i] for i in U), 2)
+  @req all(mod.(eta_U + eta[i], 2) == v[i] for i in 1:10) "The vanishing even theta constants do not have the configuration of a hyperelliptic curve."
+  thetas_sq = Dict(ch => x^2 for (ch, x) in th)
+  return [_takase_quotient(thetas_sq, eta, U, 1, l, 2) for l in 3:9]
+end
+
+################################################################################
+#
+#  Tritangent planes
+#
+#  In the coordinates x_1..x_4 in which the tritangent planes of the odd
+#  characteristics xi_1, ..., xi_5 (_g4_tritangent_basis) are x_k = 0 and
+#  x_1 + ... + x_4 = 0, the plane of an odd characteristic c is
+#  sum_k D(xi_1, .., c, .., xi_4) / D(xi_1, .., xi_5, .., xi_4) x_k = 0
+#  (c resp. xi_5 in position k, Cramer's rule; eq. (4.1)). The Jacobian
+#  nullvalues D are sums of two products of six theta constants (Fay's
+#  generalized Jacobi formula), _g4_jacobian_nullvalue_table() in
+#  ReconstructG4Tables.jl; the denominators are the entries of the first pair
+#  (chi_1 = xi_5).
+#
+################################################################################
+
+function _g4_jacobian_nullvalue(th, formula)
+  S1, S2, signs = formula
+  return signs[1]*prod(th[c] for c in S1) + signs[2]*prod(th[c] for c in S2)
+end
+
+# tritangents[i][j]: the coefficients of the plane of the characteristic
+# _g4_tritangent_pairs()[i][j] (H_i for j = 1, H_i' for j = 2)
+function _g4_tritangents(th)
+  table = _g4_jacobian_nullvalue_table()
+  normalization = [_g4_jacobian_nullvalue(th, table[1][1][k]) for k in 1:4]
+  return [[[_g4_jacobian_nullvalue(th, table[i][j][k]) / normalization[k] for k in 1:4]
+           for j in 1:2] for i in 1:10]
+end
+
+################################################################################
+#
+#  Bitangents of the Prym (generic case)
+#
+#  theta_X[d]^2 = theta_C[0 d1; 0 d2] theta_C[0 d1; 1 d2] for the genus 3
+#  curve X with Jac(X) = Prym (Schottky-Jung, [FR70]); the signs of the square
+#  roots are fixed by Riemann's quartic relations (_correct_theta_signs_g3),
+#  up to signs that only change the signs of whole bitangent vectors.
+#
+################################################################################
+
+function _g4_prym_bitangents(th)
+  CC = parent(th[ntuple(_ -> 0, 8)])
+  th3 = Dict{NTuple{6, Int}, AcbFieldElem}()
+  for c in even_theta_characteristics(3)
+    p = th[(0, c[1], c[2], c[3], 0, c[4], c[5], c[6])] * th[(0, c[1], c[2], c[3], 1, c[4], c[5], c[6])]
+    th3[Tuple(c)] = RSR._rotated_power(p, 1//2)      # any branch; away from the branch cut
+  end
+  for c in odd_theta_characteristics(3)
+    th3[Tuple(c)] = zero(CC)
+  end
+  th3 = _correct_theta_signs_g3(th3)
+  return _aronhold_bitangents(_moduli_from_theta(th3))
+end
+
+################################################################################
+#
+#  The vanishing theta null case: moving the characteristic, the lines through
+#  the Weierstrass points of the hyperelliptic Prym
+#
+################################################################################
+
+# M o c for tau -> (A tau + B)(C tau + D)^-1 (theta[M o c](M tau) is a multiple
+# of theta[c](tau); characteristics in bits; checked numerically)
+function _g4_characteristic_action(M::Matrix{Int}, c)
+  g = div(size(M, 1), 2)
+  A, B, C, D = M[1:g, 1:g], M[1:g, g+1:2*g], M[g+1:2*g, 1:g], M[g+1:2*g, g+1:2*g]
+  a, b = collect(c[1:g]), collect(c[g+1:2*g])
+  new_a = D*a - C*b + [sum(C[i, k]*D[i, k] for k in 1:g) for i in 1:g]
+  new_b = -B*a + A*b + [sum(A[i, k]*B[i, k] for k in 1:g) for i in 1:g]
+  return Tuple(mod.(vcat(new_a, new_b), 2))
+end
+
+function _symplectic_generators(g::Int)
+  I = _integer_identity(g)
+  Z = zeros(Int, g, g)
+  gens = [[Z I; -I Z]]
+  for i in 1:g, j in i:g
+    S = zeros(Int, g, g)
+    S[i, j] = S[j, i] = 1
+    push!(gens, [I S; Z I])
+  end
+  for i in 1:g, j in 1:g
+    i == j && continue
+    A = copy(I)
+    A[i, j] = 1
+    Ainv = copy(I)
+    Ainv[i, j] = -1
+    push!(gens, [A Z; Z permutedims(Ainv)])
+  end
+  return gens
+end
+
+_integer_identity(g::Int) = [i == j ? 1 : 0 for i in 1:g, j in 1:g]
+
+# A short word M in the generators with M o v = target (breadth first search
+# on the 136 even characteristics).
+function _symplectic_matrix_moving(v, target)
+  g = div(length(v), 2)
+  gens = _symplectic_generators(g)
+  start = _integer_identity(2*g)
+  seen = Dict(Tuple(v) => start)
+  queue = [Tuple(v)]
+  while !isempty(queue)
+    c = popfirst!(queue)
+    c == Tuple(target) && return seen[c]
+    for G in gens
+      M = G * seen[c]
+      d = _g4_characteristic_action(M, Tuple(v))
+      haskey(seen, d) && continue
+      seen[d] = M
+      push!(queue, d)
+    end
+  end
+  error("No symplectic matrix found (internal error).")
+end
+
+function _g4_move_vanishing_characteristic(tau::AcbMatrix, v, prec::Int = precision(base_ring(tau)))
+  target = (0, 1, 1, 1, 0, 1, 0, 1)
+  M = _symplectic_matrix_moving(v, target)
+  @assert _g4_characteristic_action(M, Tuple(v)) == target
+  MZ = matrix(ZZ, M)
+  tau2 = Hecke.siegel_transform(MZ, tau)
+  tau2 = (tau2 + transpose(tau2)) * inv(base_ring(tau2)(2))
+  th2 = theta_constants(tau2)
+  vanishing = _vanishing_even_theta_constants(th2, prec)
+  @req vanishing == [target] "Moving the vanishing even theta constant failed (vanishing after the transformation: $vanishing)."
+  return MZ, tau2, th2
+end
+
+# The Prym is hyperelliptic with Mumford's eta map (the vanishing genus 3
+# characteristic is (1,1,1,1,0,1) = eta_U): its Weierstrass points on the conic
+# (1 : t : t^2), t = 0, 1, lambda_3..lambda_7, oo, and the 28 lines through
+# pairs of them (in the order (1,2), (1,3), ..., (7,8)).
+function _g4_hyperelliptic_prym_lines(th)
+  CC = parent(th[ntuple(_ -> 0, 8)])
+  o, z = one(CC), zero(CC)
+  thetas_sq = Dict{NTuple{6, Int}, AcbFieldElem}()
+  for c in Iterators.product(ntuple(_ -> 0:1, 6)...)
+    c = reverse(c)
+    thetas_sq[c] = th[(0, c[1], c[2], c[3], 0, c[4], c[5], c[6])] * th[(0, c[1], c[2], c[3], 1, c[4], c[5], c[6])]
+  end
+  eta = _mumford_eta()
+  U = union([i for i in 1:8 if _is_odd_characteristic(eta[i])], [8])
+  lambdas = [_takase_quotient(thetas_sq, eta, U, 1, l, 2) for l in 3:7]
+  points = vcat([[o, z, z], [o, o, o]], [[o, l, l^2] for l in lambdas], [[z, z, o]])
+  cross(p, q) = [p[2]*q[3] - p[3]*q[2], p[3]*q[1] - p[1]*q[3], p[1]*q[2] - p[2]*q[1]]
+  return [cross(points[i], points[j]) for i in 1:8 for j in i+1:8]
+end
+
+################################################################################
+#
+#  The curve from the tritangent pairs and the bitangents (Magma: ComputeCurve,
+#  ComputeCurveVanTheta0; the paper, Section 4)
+#
+################################################################################
+
+# (h h'^T + h' h^T)/2, the symmetric matrix of the quadric H H'
+function _sym_outer(h::Vector{AcbFieldElem}, h2::Vector{AcbFieldElem})
+  CC = parent(h[1])
+  return matrix(CC, 4, 4, [(h[i]*h2[j] + h2[i]*h[j]) / 2 for i in 1:4 for j in 1:4])
+end
+
+# the coefficients of (b0 y0 + b1 y1 + b2 y2)^2 at y0^2, y0y1, y0y2, y1^2, y1y2, y2^2
+_square_coefficients(b) = [b[1]^2, 2*b[1]*b[2], 2*b[1]*b[3], b[2]^2, 2*b[2]*b[3], b[3]^2]
+
+function _quadratic_form(R::MPolyRing, M::AcbMatrix)
+  xs = gens(R)
+  return sum(M[i, j]*xs[i]*xs[j] for i in 1:4 for j in 1:4)
+end
+
+@doc raw"""
+    _g4_curve_from_tangents(tritangents, bitangents) -> quadric, cubic, info
+
+The steps (4)-(10) of the paper: the relations between the products H_i H_i'
+(3 of them; V_{C,eta} has dimension 7), the lambda_i with
+phi(H_i H_i') = lambda_i l_i^2 (unique up to scaling), the quadric
+Q = ker(phi), the right inverse psi of phi with image W_eta (W_eta^perp from
+Lemma 3.8) and the Cayley cubic Gamma = sqrt(det(Delta)) (an exact square in
+P^3, also when Q is a cone).
+
+`info`: log2 of relative sizes that should be about -precision: `relations`
+(the rank defect of the H_i H_i'), `lambda` (the linear system for the
+lambda_i: not small means that the bitangents do not match the tritangent
+pairs) and `square_root` (the residual of the square root); `radii`: log2
+of the relative radii of the balls after each step.
+"""
+function _g4_curve_from_tangents(tritangents, bitangents)
   CC = parent(tritangents[1][1][1])
-  prec = precision(CC)
-  RR = ArbField(prec)
-  CC4, (x, y, z, w) = polynomial_ring(CC, [:x, :y, :z, :w])
-  X4 = matrix(CC4, 4, 1, [x, y, z, w])
-  mats1new =[matrix(tritangents[i][1] * transpose(tritangents[i][2])) for i in (1:r)]
-  mats1new =[(m + transpose(m))/2 for m in mats1new]
-  mats1newx = matrix(CC4, 1, r,[(transpose(X4) * mats1new[i] *X4)[1,1] for i in (1:r)])
-
-  Xnew = matrix([reduce(vcat,[[m[i,j] for j in (i:4)] for i in (1:4)]) for m in mats1new])
-  Xnewsym = matrix([vec(collect((m))) for m in mats1new]  )
-
-  setprecision(BigFloat, prec)
-  Xnew_float = Complex{BigFloat}.(collect(Xnew))
-
-  vi = permutedims(nullspace(transpose(Xnew_float)))
-
-  CC3, X = polynomial_ring(CC, 3)
-  
-  fs = [sum([el[i]*X[i] for i in (1:3)]) for el in bitangents[1:r]]
-  mons = monomials_of_degree(CC3, 2)
-
-  fsq_mat = Vector{AcbFieldElem}[]
-  for f in fs
-    cs = []
-    for m in mons
-      push!(cs, coeff(f^2,m))
-    end
-    push!(fsq_mat, cs)
-  end
-  fsq_mat = matrix(fsq_mat)
-  fsq_mat_float = Complex{BigFloat}.(collect(fsq_mat))
-  si = permutedims(nullspace(transpose(fsq_mat_float)))
-  sirows = nrows(si)
-  
-  N = hcat([diagm(vi[i,:])*fsq_mat_float for i in (1:nrows(vi))]...)
-  #//TODO: Check singular values to see if rank is too small. If so then compute more tritangents.
-  #DN = svd(N).S
-  tolerance = 10^(-precision(BigFloat) * 0.9 *log(2)/log(10))
-  gammaiinv = permutedims(nullspace(transpose(N), rtol = tolerance))
-  @req nrows(gammaiinv) == 1 "Error in the numerical computation."
-  gammaiinv = gammaiinv[1,:]
-  
-  F = svd(Xnew_float)
-  DXnew, U, V = F.S, F.U, F.V
-  Upart_float = U[1:7,:]
-  Upart = matrix(CC.(Upart_float))
-  phi = Upart_float*diagm(gammaiinv)*fsq_mat_float
-
-  #Kernel is not deterministic
-  
-  Qpre = permutedims(nullspace(transpose(phi)))
-  Qpre1_float = Qpre*Upart_float
-
-  Qpre1 = CC.(Qpre1_float)
-
-  Qnew = sum([Qpre1[1,i]*mats1new[i] for i in (1:r) ])
-  dualelt = mats1newx*transpose(matrix(Upart))
-  
-  VCeta = transpose(matrix([vec(collect(mat)) for mat in mats1new]))
-  VCeta_float = Complex{BigFloat}.(collect(VCeta))
-  VCetaperp = CC.(permutedims(nullspace(transpose(VCeta_float))))
-
-
-  VCetaperpmats = [matrix(CC, 4,4, VCetaperp[i,:]) for i in (1:nrows(VCetaperp))]
-  VCetaperpmats =[(m + transpose(m))/2 for m in VCetaperpmats]
-  Qsharp = (VCetaperpmats[1]^-1+VCetaperpmats[2]^-1)^-1
-  
-  cond = Upart*Xnewsym* matrix(CC, 16, 1, vec(collect(Qsharp)))
-  phiext = [matrix(CC,phi) cond]
-  phiTinv = transpose(phiext)^(-1)
-  phiL = dualelt*phiTinv
-  qdual = zero_matrix(CC4, 3,3)
-  count = 1
-  for i in (1:3)
-    for j in (i:3)
-      qdual[i,j] = phiL[1,count]
-      qdual[j,i] = phiL[1, count]
-      count += 1
-    end
-  end
-  detqdual = det(qdual)
-  cubic = compute_sqrt_homogeneous(detqdual)
-   
-  quadric = collect(transpose(X4)*(Qnew*X4))[1,1]
-  return [quadric, cubic]
-end
-
-function compute_sqrt_homogeneous(F)
-	R = parent(F)
-	CC = base_ring(R)
-  X = gens(R)
-  n = length(X)
-	Rmi, _ = polynomial_ring(CC, n-1)
-	d = div(total_degree(F),2)
-	_, i0 = findmax([abs(coeff(F, X[i]^(2*d))) for i in (1:n)])
-	varsmi = [X[i] for i in [1:i0-1 ; i0+1:n]]
-	co = coeff(F, R[i0]^(2*d))
-	Fnorm = F/co
-	ret = R[i0]^d
-	for i in (1:d)
-		rem = Fnorm - ret^2
-	  mons = [evaluate(mon, varsmi) for mon in monomials_of_degree(Rmi, i)]
-		ret += 1/2 * sum([coeff(rem, m*X[i0]^(2*d-i))*m*X[i0]^(d-i) for m in mons])
-	end
-	return sqrt(co)*ret
-end
-
-
-
-function compute_tritangents(thetas::Dict{NTuple{8, Int64}, AcbFieldElem})
-  tritangentsys =
-   [(0, 1, 1, 0, 0, 1, 0, 0 ), (0, 1, 1, 0, 1, 1, 0, 0 )],
-    [(0, 1, 0, 0, 0, 1, 0, 0 ), (0, 1, 0, 0, 1, 1, 0, 0 )],
-    [(0, 1, 0, 1, 0, 1, 0, 0 ), (0, 1, 0, 1, 1, 1, 0, 0 )],
-    [(0, 1, 1, 1, 0, 1, 0, 0 ), (0, 1, 1, 1, 1, 1, 0, 0 )],
-    [(0, 1, 0, 1, 0, 1, 1, 0 ), (0, 1, 0, 1, 1, 1, 1, 0 )],
-    [( 0, 1, 0, 0, 0, 1, 1, 0 ), (0, 1, 0, 0, 1, 1, 1, 0 )],
-    [( 0, 1, 0, 0, 0, 1, 1, 1 ), (0, 1, 0, 0, 1, 1, 1, 1 )],
-    [( 0, 1, 1, 1, 0, 1, 1, 1 ), (0, 1, 1, 1, 1, 1, 1, 1 )],
-    [( 0, 1, 0, 0, 0, 1, 0, 1 ), (0, 1, 0, 0, 1, 1, 0, 1 )],
-    [(0, 1, 1, 0, 0, 1, 0, 1 ), (0, 1, 1, 0, 1, 1, 0, 1 )]
-
-  tritangentbasis = [
-    (1, 1, 1, 0, 1, 1, 1, 0),
-    (1, 0, 1, 0, 0, 0, 1, 0),
-    (1, 1, 1, 0, 0, 0, 1, 0),
-    (1, 0, 1, 0, 0, 1, 1, 0),
-    (0, 1, 1, 0, 0, 1, 0, 0)]
-  
-  CC = parent(thetas[0,0,0,0,0,0,0,0])
-  S1 = [[
-    (1, 1, 0, 1, 0, 1, 1, 1),
-    (0, 1, 1, 1, 1, 1, 0, 1,),
-    (1, 1, 0, 1, 0, 1, 0, 1),
-    (0, 1, 1, 1, 1, 1, 1, 0,),
-    (1, 1, 1, 0, 1, 1, 0, 0,),
-    (0, 1, 1, 0, 1, 1, 1, 1)],
-[
-    (0, 1, 0, 1, 0, 1, 1, 1),
-    (1, 0, 1, 1, 0, 0, 1, 1),
-    (0, 1, 0, 1, 0, 1, 0, 1),
-    (1, 0, 1, 1, 0, 0, 0, 0,),
-    (0, 1, 1, 0, 1, 1, 1, 0,),
-    (1, 0, 1, 0, 0, 0, 0, 1)],
-[
-    (0, 1, 0, 1, 0, 1, 1, 1),
-    (1, 1, 1, 1, 0, 0, 1, 1),
-    (0, 1, 0, 1, 0, 1, 0, 1),
-    (1, 1, 1, 1, 0, 0, 0, 0,),
-    (0, 1, 1, 0, 1, 1, 1, 0,),
-    (1, 1, 1, 0, 0, 0, 0, 1)],
-[
-    (0, 1, 0, 1, 0, 1, 0, 1),
-    (1, 0, 1, 1, 0, 1, 1, 1),
-    (0, 1, 0, 1, 0, 1, 1, 1),
-    (1, 0, 1, 1, 0, 1, 0, 0),
-    (0, 1, 1, 0, 1, 1, 1, 0),
-    (1, 0, 1, 0, 0, 1, 0, 1)]]
-
-  S2 = [[
-    (0, 1, 0, 1, 0, 1, 0, 1),
-    (1, 1, 1, 1, 1, 1, 1, 1),
-    (0, 1, 0, 1, 0, 1, 1, 1),
-    (1, 1, 1, 1, 1, 1, 0, 0),
-    (0, 1, 1, 0, 1, 1, 1, 0),
-    (1, 1, 1, 0, 1, 1, 0, 1)],
-    [
-    (1, 0, 0, 1, 1, 0, 0, 1),
-    (0, 1, 1, 1, 1, 1, 0, 1),
-    (1, 0, 0, 1, 1, 0, 1, 1),
-    (0, 1, 1, 1, 1, 1, 1, 0),
-    (1, 0, 1, 0, 0, 0, 0, 0),
-    (0, 1, 1, 0, 1, 1, 1, 1)],
-    [
-    (1, 1, 0, 1, 1, 0, 0, 1),
-    (0, 1, 1, 1, 1, 1, 0, 1),
-    (1, 1, 0, 1, 1, 0, 1, 1),
-    (0, 1, 1, 1, 1, 1, 1, 0),
-    (1, 1, 1, 0, 0, 0, 0, 0),
-    (0, 1, 1, 0, 1, 1, 1, 1)],
-    [
-    (1, 0, 0, 1, 1, 1, 1, 1),
-    (0, 1, 1, 1, 1, 1, 0, 1),
-    (1, 0, 0, 1, 1, 1, 0, 1),
-    (0, 1, 1, 1, 1, 1, 1, 0),
-    (1, 0, 1, 0, 0, 1, 0, 0),
-    (0, 1, 1, 0, 1, 1, 1, 1)
-]]
-
-  Signs = [[-1,1],[1,-1],[-1,1],[-1,1]]
-
-  S1S2signs = hard_coded_s1_s2()
-  constant = zeros(CC, 4)
-  for k in (1:4)
-    temp_list = [tritangentbasis[1:k - 1]..., tritangentbasis[5],tritangentbasis[k+1:4]...]
-    s1 = S1[k]
-    s2 = S2[k]
-    signs = Signs[k]
-    T1 = CC(1)
-    T2 = CC(1)
-    for s in s1
-      T1 *= thetas[s]
-    end
-    for s in s2
-      T2 *= thetas[s]
-    end
-    constant[k] = signs[1]*T1 + signs[2]*T2
-  end
-
-  tritangents = [[zeros(CC, 4), zeros(CC, 4)] for t in (1:10)]
-  for i in (1:10)
-    for j in (1:2)
-      for k in (1:4)
-        S1, S2, signs = S1S2signs[i][j][k]
-        T1 = CC(1)
-        T2 = CC(1)
-        for s in S1
-          T1 *= thetas[s]
-        end
-
-        for s in S2
-          T2 *= thetas[s]
-        end
-        tritangents[i][j][k] = (signs[1]*T1 + signs[2]*T2)/constant[k]
-      end
-    end
-  end
-  
-  return tritangents
-end
-
-function Complex{BigFloat}(x::AcbFieldElem)
-  return Complex{BigFloat}(real(x), imag(x))
-end
-
-function monomials_of_degree(R::MPolyRing, n::Int)
-  X = gens(R)
-  W = Iterators.product(repeat([X], n)...)
-  result = Set{MPolyRingElem}()
-  for a in W
-    push!(result, prod(a))
-  end
-  return [r for r in result]
-end
-
-
-function preloop()
-  id = identity_matrix(GF(2), 3)
-  zero_block = zero_matrix(GF(2), 3, 3)
-  J = [zero_block id
-      id zero_block]
-  J1 = [zero_block id
-  zero_block zero_block]
-  chars = sort(even_theta_characteristics(3))
-  char_vecs = collect.(chars)
-
-  V = vector_space(GF(2), 21)
-  cs = [[GF(2)(1) for i in (1:36)]]
-
-  for v in basis(V)
-    T = upper_triangular_matrix(v.v[1,:])
-    new = [(transpose(ve*T)*ve) for ve in char_vecs]
-    push!(cs, new)
-  end
-
-  A = matrix(cs)
-  A_ech = echelon_form(A)
-  pivots = [minimum(filter( i -> A_ech[j,i] == one(GF(2)), (1:36))) for j in (1:21)]
-  pivots_compl= filter(x -> !(x in pivots), (1:36))
-
-  W = Iterators.product(repeat([[0,1]], 6)...)
-  T = [ char_vecs[i] for i in pivots]
-  Tcompl = [ char_vecs[i] for i in pivots_compl]
-
-  function check_condition_bs(v1, v2)
-    i = something(findfirst(isone, v1),0)
-    j = something(findfirst(isone, v2),0)
-    return transpose(v1*J)*v2 == 0 &&
-    i < j && 
-    iszero(v1[j]) && !iszero(v1) && !iszero(v2) &&  
-    transpose(v1*J1)*v1 == transpose(v2*J1)*v2
-  end
-
-  bs = []
-
-  for b1 in W
-    for b2 in W 
-      v1, v2 = collect.([b1,b2])
-      if check_condition_bs(v1, v2)
-        push!(bs, [v1,v2])
-      end
-    end
-  end
-
- N = length(bs)
-
-  function check_condition_cs(v1, v2, c)
-    return transpose(v1*J)*c == transpose(v1*J1)*v1  &&
-    transpose(v2*J)*c == transpose(v2*J1)*v2
-  end
-
-  cs = Vector{Vector{Int}}[]
-  for b in bs
-    temp = Vector{Int}[]
-    for c in char_vecs
-      if check_condition_cs(b[1],b[2], c)
-        push!(temp, c)
-      end
-    end
-    push!(cs, temp)
-  end
-
-  rep = [filter(x-> iszero(x[findfirst(isone, bs[i][1])]) &&  iszero(x[findfirst(isone, bs[i][2])]), cs[i]) for i in (1:length(bs))]
-  cosets = [ [map(x-> mod.(x,2), [rep[i][j], rep[i][j]+bs[i][1],  rep[i][j]+bs[i][2], rep[i][j]+bs[i][1]+bs[i][2]]) for j in (1:3)]  for i in (1:N)]
-
-  S = []
-  A = []
-  for k in (1:3)
-    push!(S, filter(c-> all(x->x in T, cosets[c][k]), (1:161)))
-    A = vcat(A, [[ [Int(any([cosets[i][2][j] == c for j in (1:4)]))  for c in Tcompl], [Int(any([cosets[i][3][j] == c for j in (1:4)])) for c in Tcompl]] for  i in S[k]])
-  end
-
-  Si = reduce(vcat, S)
-
-  As = matrix(A[1])
-  i = 2
-  list = [Si[1]]
-  listcoind = [1]
-  while rank(As) < 15
-    VJ = matrix([As ; matrix(A[i])])
-    if rank(VJ) > rank(As)
-      As = VJ
-      push!(list, Si[i])
-      if i < length(S[1])
-        push!(listcoind, 1)
-      elseif i < length(S[1]) + length(S[2])
-        push!(listcoind, 2)
-      else
-        push!(listcoind, 3)
-      end
-    end
-    i = i+1
-  end
-  usedbs = [bs[i] for i in list]
-  usedrep = [rep[i] for i in list]
-  return As, usedbs, usedrep, listcoind, Tcompl
-end
-
-
-function correct_signs(thetas)
-  X, bs, rep, coind, Tcompl = preloop()
-
-  id = identity_matrix(ZZ, 3)
-  zero_block = zero_matrix(ZZ, 3, 3)
-  J = [zero_block id
-      id zero_block]
-  J1 = [zero_block id
-  zero_block zero_block]
-  N = length(bs)
-
-  F = GF(2)
-
-  cosets = [ [[rep[i][j], rep[i][j]+bs[i][1],  rep[i][j]+bs[i][2], rep[i][j]-bs[i][1]-bs[i][2]] for j in (1:3)]  for i in (1:N)]
-  cosets4 = [[[ [cosets[i][j][nu], cosets[i][j][nu] - bs[i][1], cosets[i][j][nu]- bs[i][2], cosets[i][j][nu]- bs[i][1]- bs[i][2] ] for nu in (1:4)] for j in (1:3)] for i in (1:N)]
-  carry=[[[[[fld(cosets4[i][j][xi][mu][nu], 2) for nu in (1:6)] for mu in (1:4)] for xi in (1:4)] for j in (1:3)] for i in (1:N)]
-  vec=FqFieldElem[]
-  pairs = [F.([0,0]),F.([1,0]),F.([0,1]), F.([1,1])]
-  for i in (1:N)
-    #Term of the theta relation where the sign is fixed.
-    coindi = coind[i]
-    #Other two terms
-      compl = filter(x-> x != coindi, (1:3)) 
-      coeff = [sum([  ZZ(-1)^ sum([transpose(cosets4[i][j][xi][mu]*J1)*carry[i][j][xi][mu] for xi in (1:4)]) for mu in (1:4)  ]) for j in (1:3)]
-      if rep[i][1] == [0,0,0,0,0,0]
-		    coeff[1] -= 8
-	    end
-    sigsposs = [[coeff[j] for nu in (1:4)] for j in (1:3) ]
-    #= nu=1 means no sign switch
-      nu=2 means 1st sign switches
-      nu=3 means 2nd sign switches
-      nu=4 means both signs switch
-    =#
-    sigsposs[compl[1]][2] *= (-1)
-    sigsposs[compl[2]][3] *= (-1)
-    sigsposs[compl[1]][4] *= (-1)
-    sigsposs[compl[2]][4] *= (-1)
-
-    thetarel = [abs(sum([sigsposs[j][nu]*  prod([thetas[map(x -> mod(x,2), cosets[i][j][xi])... ] for xi in (1:4)]) for j in (1:3)]))   for nu in (1:4)]
-    min, ind = findmin(thetarel)
-    vec = [vec ; pairs[ind]] 
-  end
-
-  sol = solve(transpose(matrix(F, X)), vec)
-  for j in (1:length(Tcompl))
-    thetas[Tcompl[j]...] *= ZZ(-1)^(lift(ZZ,sol[j]))
-  end
-  return thetas
-end
-
-
-function moduli_from_theta(theta_dict)
-  inds = Hecke.theta_characteristics_indices(3)
-  thetas = [theta_dict[inds[i]] for i in (1:64)]
-  I = onei(parent(thetas[1]))
-  a1 = I*thetas[34]*thetas[6]/(thetas[41]*thetas[13])
-  a2 = I*thetas[22]*thetas[50]/(thetas[29]*thetas[57])
-  a3 = I*thetas[8]*thetas[36]/(thetas[15]*thetas[43])
-  ap1 = I*thetas[6]*thetas[55]/(thetas[28]*thetas[41])
-  ap2 = I*thetas[50]*thetas[3]/(thetas[48]*thetas[29])
-  ap3 = I*thetas[36]*thetas[17]/(thetas[62]*thetas[15])
-  as1 = -thetas[55]*thetas[34]/(thetas[13]*thetas[28])
-  as2 = thetas[3]*thetas[22]/(thetas[57]*thetas[48])
-  as3 = thetas[17]*thetas[8]/(thetas[43]*thetas[62])
-  return [a1, a2, a3, ap1, ap2, ap3, as1, as2, as3]
-end
-
-function riemann_model_from_moduli(mods)
-  a1 = mods[1]; a2=mods[2];   a3 = mods[3]
-  ap1 = mods[4];ap2 = mods[5];ap3 = mods[6]
-  as1 = mods[7];as2 = mods[8];as3 = mods[9]
-  CC = parent(a1)
-  P, (x1,x2,x3) = polynomial_ring(CC,[:x1, :x2, :x3])
-  k=1;kp=1;ks=1
-  M = matrix([CC.([1,1,1]),[k*a1,k*a2,k*a3],[kp*ap1,kp*ap2,kp*ap3]])
-  Mb = matrix([CC.([1,1,1]),[1/a1,1/a2,1/a3],[1/ap1,1/ap2,1/ap3]])
-  U = -Mb^(-1)*M
-  u1 = U[1,:];u2 = U[2,:];u3 = U[3,:]
-  u1 = u1[1]*x1 + u1[2]*x2 + u1[3]*x3
-  u2 = u2[1]*x1 + u2[2]*x2 + u2[3]*x3
-  u3 = u3[1]*x1 + u3[2]*x2 + u3[3]*x3
-  return (x1*u1+x2*u2-x3*u3)^2-4*x1*u1*x2*u2, u1, u2, u3
-end
-
-function compute_bitangents(thetas)
-  CC = parent(thetas[0,0,0,0,0,0,0,0])
-  chars_even = even_theta_characteristics(3)
-  g3thetas = Dict{NTuple{6, Int64}, AcbFieldElem}()
-  for char in chars_even
-    delta_new1 = (0, char[1:3]..., 0, char[4:6]...)
-    delta_new2 = (0, char[1:3]..., 1, char[4:6]...)
-    #Formula from Lemma 1 (p. 148) of Farkas
-    g3thetas[char] = sqrt(thetas[delta_new1]*thetas[delta_new2])
-  end
-
-  for char in odd_theta_characteristics(3)
-    g3thetas[char] = zero(CC)
-  end
-  
-  g3thetas = correct_signs(g3thetas)
-  mods = moduli_from_theta(g3thetas)
-  mods_mat = [[mods[i], mods[i+1], mods[i+2]] for i in [1,4,7]]
-  ks = matrix(CC, 3, 1, [1,1,1])
-  bitangents = map(x->CC.(x), [ [1, 0, 0], [0,1,0], [0,0,1], [1,1,1]])
-  bitangents = [bitangents ; mods_mat]
-  F, u0, u1, u2 = riemann_model_from_moduli(mods)
-  R = parent(u0)
-  X = gens(R)
-  t0, t1, t2 = X
-  bitangents = [bitangents ; [[coeff(el, x) for x in X] for el in [u0, u1, u2]]]
-  bitangents = [bitangents ; [[coeff(el, x) for x in X] for el in [t0+t1+u2, t0+u1+t2, u0+t1+t2]]]
-
-  mods_mat = transpose(matrix(mods_mat))
-# (3)
-  for i in (1:3)
-    new = u0/mods_mat[1,i] + ks[i,1]*(mods_mat[2,i]*t1 + mods_mat[3,i]*t2)
-    push!(bitangents, [coeff(new, x) for x in X])
-  end
-# (4)
-  for i in (1:3)
-    new = u1/mods_mat[2,i] + ks[i,1]*(mods_mat[1,i]*t0 + mods_mat[3,i]*t2)
-    push!(bitangents, [coeff(new, x) for x in X])
-  end
-# (5)
-  for i in (1:3)
-    new = u2/mods_mat[3,i] + ks[i,1]*(mods_mat[1,i]*t0 + mods_mat[2,i]*t1)
-    push!(bitangents, [coeff(new, x) for x in X])
-  end
-# (6)
-  modsinv = inv(mods_mat)
-
-  D = diagonal_matrix([1/el for el in modsinv*CC.([1,1,1])])
-  modstra = transpose(D*modsinv)
-  Atra = transpose(matrix(CC, 3,3, [1/el for el in modstra]))
-  lambdastra = solve(transpose(Atra), CC.([-1,-1,-1]))
-  Ltra = diagonal_matrix(lambdastra)
-  Btra = transpose(modstra)*Ltra
-  kstra = solve(transpose(Btra), CC.([-1,-1,-1]))
-
-  k = kstra[1]
-  kp = kstra[2]
-
-  M = matrix([CC.([1,1,1]), (k*modstra)[1,:], (kp*modstra)[2,:]])
-  Mb = matrix([CC.([1,1,1]), transpose(Atra)[1,:], transpose(Atra)[2,:]])
-  U = -Mb^(-1)*M
-  u1tra = U[1,:]*inv(modstra)
-  u2tra = U[2,:]*inv(modstra)
-  u3tra = U[3,:]*inv(modstra)
-
-  bitangents = [bitangents ; [u1tra, u2tra, u3tra]]
-# (7)
-  for i in (1:3)
-    new = u0/(mods_mat[1,i]*(1-ks[i,1]*mods_mat[2,i]*mods_mat[3,i])) + u1/(mods_mat[2,i]*(1-ks[i,1]*mods_mat[1,i]*mods_mat[3,i])) + u2/(mods_mat[3,i]*(1-ks[i,1]*mods_mat[1,i]*mods_mat[2,i]))
-    push!(bitangents, [coeff(new, x) for x in X])
-  end
-  return bitangents
-end
-
-function tritangent_planes_g4(tau::AcbMatrix, chars::Vector)
-  
-  result = []
-  z = 
-  thetas_plus_derivatives = theta_jets(z, tau, 1)
-  for char in chars
-    n = CharacteristicToInteger(char)
-    Th_derivs = [thetas_plus_derivatives[n+1][i] : i in [2..5]]
-    Th_derivs = Eltseq(Matrix(1, 4, Th_derivs)*(Pi1^-1))
-    push!(result, Th_derivs)
-  end
-
-  return result
-end
-
-
-
-function lift_SL_n(A, n)
-  p = characteristic(base_ring(A))
-  @req base_ring(A) == GF(p) "Base ring of A needs to be a primitive finite field."
-
-  n = number_of_rows(A)
-  A_inv = A^(-1)
-  col = findfirst(x !=0, A[1,:])
-  entry = ZZ((Ainv[1, col]^(-1)))
-  A_lift = A
-  for i in (2:n)
-    ZZpi, phi = residue_ring(ZZ, p^i)
-    Alift = change_base_ring(ZZpi, change_base_ring(ZZ, A_lift))
-    eps = ZZ((det(A_lift) - 1))
-    Alift[col,1] -= eps*entry
-  end
-  return Alift
-end
-
-function _split_in_blocks(S::MatrixElem)
-  A = S[1:4, 1:4]
-	B = S[1:4, 5:8]
-	C = S[5:8, 1:4]
-	D = S[5:8, 5:8]
-  return A, B, C, D
-end
-
-function reconstruct_g4_curve_generic(g4thetas)
-  tritangents = compute_tritangents(g4thetas)
-  bitangents = compute_bitangents(g4thetas)
-
-  quadric, cubic = reconstruct_g4_curve_from_bi_tri_tangents([bitangents[i] for i in [10, 23, 4, 20,  17, 9, 12,  1, 5, 11]], tritangents)
-  return [quadric, cubic]
-end
-
-#Should check if this is correct
-function transform_theta_nulls(g4thetas, S)
-  transformed_thetas = g4thetas
-  for char in even_theta_characteristics(4)
-    im_char = apply_transformation_to_char(S, char)
-    transformed_thetas[map(x -> mod(x,2), 2*imchar)... ] = theta_HI(g4thetas, im_char)
-  end
-  return transformed_thetas
-end
-
-function rec_g4_curve_vanishing_theta_null(g4thetas, v)
-	g = 4
-	CC = parent(g4thetas[0,0,0,0,0,0,0,0])
-	S = MapSympl(Vector([GF(2)! el : el in v[1] cat v[2]]))
-  transform_theta_nulls(g4thetas, S)
-
-  #I think this block is identical to the non-vanishing theta null case
-  tritangents = compute_tritangents(g4thetas)
-
-  #As we have one vanishing theta null, we can choose our Prym in such a way
-  #that we get a genus 3 hyperelliptic curve.
-  bitangents = compute_bitangents_hyp(g4thetas)
-  bitangents =[bitangents[i] for i in  [24, 20, 21, 23, 17, 16, 15, 14, 19, 26 ]]
-  
   r = length(tritangents)
-  CC = parent(tritangents[1][1][1])
-  prec = precision(CC)
-  RR = ArbField(prec)
-  CC4, (x, y, z, w) = polynomial_ring(CC, [:x, :y, :z, :w])
-  X4 = matrix(CC4, 4, 1, [x, y, z, w])
-  mats1new =[matrix(tritangents[i][1] * transpose(tritangents[i][2])) for i in (1:r)]
-  mats1new =[(m + transpose(m))/2 for m in mats1new]
-  mats1newx = matrix(CC4, 1, r,[(transpose(X4) * mats1new[i] *X4)[1,1] for i in (1:r)])
-
-  Xnew = matrix([reduce(vcat,[[m[i,j] for j in (i:4)] for i in (1:4)]) for m in mats1new])
-  Xnewsym = matrix([vec(collect((m))) for m in mats1new]  )
-
-  setprecision(BigFloat, prec)
-  Xnew_float = Complex{BigFloat}.(collect(Xnew))
-
-  vi = permutedims(nullspace(transpose(Xnew_float)))
-
-  CC3, X = polynomial_ring(CC, 3)
-  
-  fs = [sum([el[i]*X[i] for i in (1:3)]) for el in bitangents[1:r]]
-  mons = monomials_of_degree(CC3, 2)
-
-  fsq_mat = Vector{AcbFieldElem}[]
-  for f in fs
-    cs = []
-    for m in mons
-      push!(cs, coeff(f^2,m))
-    end
-    push!(fsq_mat, cs)
+  mats = [_sym_outer(t[1], t[2]) for t in tritangents]
+  upper = [(i, j) for i in 1:4 for j in i:4]
+  X = matrix(CC, r, 10, [m[i, j] for m in mats for (i, j) in upper])
+  # the relations n_k (sum_i n_k[i] H_i H_i' = 0) and 7 independent products
+  relations_data = _numerical_kernel_data(transpose(X); nullity = 3)
+  relations, basis = relations_data.kernel, relations_data.pivot_columns
+  q_relations = _log2_relative_residual(transpose(X), relations)
+  @req q_relations < -precision(CC) / 4 "The products of the tritangent pairs do not satisfy 3 linear relations (log2 residual $q_relations); is the precision too low?"
+  fsq = matrix(CC, r, 6, [c for b in bitangents for c in _square_coefficients(b)])
+  # lambda: sum_i lambda_i n_k[i] l_i^2 = 0 for k = 1, 2, 3
+  N = zero_matrix(CC, r, 18)
+  for k in 1:3, i in 1:r, j in 1:6
+    N[i, 6*(k - 1) + j] = relations[i, k] * fsq[i, j]
   end
-  fsq_mat = matrix(fsq_mat)
-  fsq_mat_float = Complex{BigFloat}.(collect(fsq_mat))
-  si = permutedims(nullspace(transpose(fsq_mat_float)))
-  sirows = nrows(si)
-  
-  N = hcat([diagm(vi[i,:])*fsq_mat_float for i in (1:nrows(vi))]...)
-  #//TODO: Check singular values to see if rank is too small. If so then compute more tritangents.
-  #DN = svd(N).S
-  tolerance = 10^(-precision(BigFloat) * 0.9 *log(2)/log(10))
-  gammaiinv = permutedims(nullspace(transpose(N), rtol = tolerance))
-  @req nrows(gammaiinv) == 1 "Error in the numerical computation."
-  gammaiinv = gammaiinv[1,:]
-  
-  F = svd(Xnew_float)
-  DXnew, U, V = F.S, F.U, F.V
-  Upart_float = U[1:7,:]
-  Upart = matrix(CC.(Upart_float))
-  phi = Upart_float*diagm(gammaiinv)*fsq_mat_float
-
-  #Kernel is not deterministic
-  
-  Qpre = permutedims(nullspace(transpose(phi)))
-  Qpre1_float = Qpre*Upart_float
-
-  Qpre1 = CC.(Qpre1_float)
-
-  Qnew = sum([Qpre1[1,i]*mats1new[i] for i in (1:r) ])
-  dualelt = mats1newx*transpose(matrix(Upart))
-  
-  VCeta = transpose(matrix([vec(collect(mat)) for mat in mats1new]))
-  VCeta_float = Complex{BigFloat}.(collect(VCeta))
-  VCetaperp = CC.(permutedims(nullspace(transpose(VCeta_float))))
-
-
-  VCetaperpmats = [matrix(CC, 4,4, VCetaperp[i,:]) for i in (1:nrows(VCetaperp))]
-  VCetaperpmats =[(m + transpose(m))/2 for m in VCetaperpmats]
-  Qsharp = (VCetaperpmats[1]^-1+VCetaperpmats[2]^-1)^-1
-  
-  cond = Upart*Xnewsym* matrix(CC, 16, 1, vec(collect(Qsharp)))
-  phiext = [matrix(CC,phi) cond]
-  phiTinv = transpose(phiext)^(-1)
-  phiL = dualelt*phiTinv
-  qdual = zero_matrix(CC4, 3,3)
-  count = 1
-  for i in (1:3)
-    for j in (i:3)
-      qdual[i,j] = phiL[1,count]
-      qdual[j,i] = phiL[1, count]
-      count += 1
+  lambda = numerical_kernel(transpose(N); nullity = 1)[1]
+  q_lambda = _log2_relative_residual(transpose(N), lambda)
+  @req q_lambda < -precision(CC) / 4 "The bitangents do not match the tritangent pairs (log2 residual $q_lambda); is the precision too low?"
+  # phi on the basis H_i H_i', i in basis, of V_{C,eta}
+  phi = matrix(CC, 7, 6, [lambda[i, 1] * fsq[i, j] for i in basis for j in 1:6])
+  kernel_phi = numerical_kernel(transpose(phi); nullity = 1)[1]
+  Qm = sum(kernel_phi[a, 1] * mats[basis[a]] for a in 1:7)
+  # V_{C,eta}^perp (trace pairing) and Q' = (Q1^-1 + Q2^-1)^-1 in W_eta^perp
+  perp = numerical_kernel(X; nullity = 3)[1]
+  function perp_matrix(k)
+    W = zero_matrix(CC, 4, 4)
+    for (l, (i, j)) in enumerate(upper)
+      W[i, j] = perp[l, k]
     end
+    return (W + transpose(W)) * inv(CC(2))
   end
-  detqdual = det(qdual)
-
-  #CHECK IF WE STILL NEED SQRT ON CONE or if it's automatic here as well.
-  
-  S:= NormalForm(Qnew);
-
-  //Compute the matrix S2 whose inverse will transform the normal form into one where all coefficients are 1.
-
-  S2 := S * Qnew * Transpose(S);
-  
-  _, ind := Min([Abs(S2[i,i]) : i in [1..4]]); //sometimes the smallest is not the last one
-
-  for i in [1..4] do
-    if i ne ind then 
-      S2[i,i] := Sqrt(S2[i,i]);
-    end if;
-  end for;
-  S2[ind,ind] := 1;
-
-  L_swap := [1,2,3,4];
-  L_swap[ind] := 4;
-  L_swap[4] := ind;
-  P_swap := PermutationMatrix(CC, L_swap);
-
-  I:=CC.1;
-//Coordinate Transformation that maps x^2 + y^2 +z^2 to xy - z^2.
-  DiagToCone := Matrix(CC, 4, 4, [[1,0,0,0],[0,1/2*I,-1/2,0],[0,1/2*I,1/2,0], [0,0,0,1]])*P_swap;
-
-//Complete Transformation
-  QtoCone := DiagToCone * S2^(-1) * S; 
-
-
-  v:=Matrix(CC4, [[CC4.1, CC4.2, CC4.3, CC4.4]]);
-
-  //Apply coordinate transformation to detqdual to map the quadric to a cone
-  detqdualoncone := Evaluate(detqdual, Eltseq((v * ChangeRing(QtoCone, CC4))[1]));
-  
-  //Pull back to P1 x P1 and take the square root there
-  ConeCubic := ComputeSquareRootOnCone(detqdualoncone);
- 
-  //Reverse the coordinate transformation
-  cubic := Evaluate(ConeCubic, Eltseq((v * ChangeRing(QtoCone^(-1), CC4))[1]));
-  quadric:=(v*ChangeRing(Qnew, CC4) *Transpose(v))[1,1];
-  return quadric, cubic
+  Qsharp = _inv_precond(_inv_precond(perp_matrix(1)) + _inv_precond(perp_matrix(2)))
+  extra = [sum(mats[basis[a]][i, j] * Qsharp[i, j] for i in 1:4 for j in 1:4) for a in 1:7]
+  phiext = zero_matrix(CC, 7, 7)
+  for a in 1:7
+    for j in 1:6
+      phiext[a, j] = phi[a, j]
+    end
+    phiext[a, 7] = extra[a]
+  end
+  Tinv = _inv_precond(transpose(phiext))
+  R, _ = polynomial_ring(CC, [:x1, :x2, :x3, :x4]; cached = false)
+  dual = [_quadratic_form(R, mats[i]) for i in basis]
+  d = [sum(dual[a] * Tinv[a, c] for a in 1:7) for c in 1:6]
+  # Delta = [d1 d2 d3; d2 d4 d5; d3 d5 d6]
+  G = d[1]*(d[4]*d[6] - d[5]^2) - d[2]*(d[2]*d[6] - d[5]*d[3]) + d[3]*(d[2]*d[5] - d[4]*d[3])
+  quadric = _quadratic_form(R, Qm)
+  cubic, q_sqrt = _sqrt_homogeneous(G)
+  # log2 of the relative radii after each step
+  radii = (tritangents = _log2_relative_radius(vcat(tritangents...)), bitangents = _log2_relative_radius(bitangents),
+           relations = _log2_relative_radius(relations), lambda = _log2_relative_radius(lambda),
+           kernel_phi = _log2_relative_radius(kernel_phi), Qsharp = _log2_relative_radius(Qsharp),
+           Tinv = _log2_relative_radius(Tinv), Delta = _log2_relative_radius(d), G = _log2_relative_radius(G),
+           quadric = _log2_relative_radius(quadric), cubic = _log2_relative_radius(cubic))
+  return quadric, cubic, (relations = q_relations, lambda = q_lambda, square_root = q_sqrt, radii = radii)
 end
 
-function find_delta(thetas)
-  CC = parent(thetas[0,0,0,0,0,0,0,0])
-  even_chars = even_theta_characteristics(4)
-  v0s = []
-  for cha in even_chars
-    theta = thetas[cha]
-    if contains(theta, zero(CC))
-      push!(v0s, cha)
+################################################################################
+#
+#  A model over Q (or a number field) from the big period matrix
+#
+#  Magma: RationalReconstructCurveG4. The small period matrix determines the
+#  curve only up to isomorphism over C; the big period matrix Pi also fixes
+#  a basis of the differentials. If that basis is defined over K (e.g. the
+#  basis of big_period_matrix(RS) for a curve over K), the canonical model in
+#  the coordinates of these differentials is defined over K up to scaling.
+#
+################################################################################
+
+# x = L y: the coordinates x of the reconstruction from the coordinates y of
+# the differentials of the big period matrix Omega = [Omega_A Omega_B] (rows:
+# the differentials, tau = Omega_A^-1 Omega_B): z = Omega_A'^-1 y (the
+# normalized differentials for tau' = T(tau), Omega' = Omega [D^T B^T; C^T A^T]
+# for T = [A B; C D]) and x_k = mu_k <grad theta[xi_k](0, tau'), z> with
+# grad theta[xi_5] = sum_k mu_k grad theta[xi_k] (the tritangent plane of xi_k
+# is x_k = 0, the one of xi_5 is x_1 + .. + x_4 = 0). Magma: TritangentPlanes.
+function _g4_coordinates_from_differentials(Omega::AcbMatrix, data)
+  tau = data.tau
+  CC = base_ring(tau)
+  T = change_base_ring(CC, data.transform)
+  Cb, D = T[5:8, 1:4], T[5:8, 5:8]
+  OmegaA = Omega[:, 1:4] * transpose(D) + Omega[:, 5:8] * transpose(Cb)
+  jets = Hecke.theta_jets([zero(CC) for _ in 1:4], tau, 1)
+  unit(i) = Tuple(j == i ? 1 : 0 for j in 1:4)
+  grad(c) = [jets[c][unit(i)] for i in 1:4]
+  xi = _g4_tritangent_basis()
+  Gm = matrix(CC, 4, 4, [grad(xi[k])[i] for i in 1:4 for k in 1:4])     # columns: grad xi_k
+  mu = _solve_precond(Gm, matrix(CC, 4, 1, grad(xi[5])))
+  return diagonal_matrix([mu[k, 1] for k in 1:4]) * transpose(Gm) * _inv_precond(OmegaA)
+end
+
+# K, the embedding K -> CC and the recognition CC -> K (nothing on failure)
+function _recognition_field_data(K, place, CC::AcbField)
+  if K isa QQField
+    return QQ, (c -> CC(c)), _recognize_rational, nothing
+  end
+  v = place === nothing ? infinite_places(K)[1] : place
+  embed(c) = CC(RSR._embed_coefficient(c, v.embedding, precision(CC)))
+  function recognize(a)
+    try
+      return RSR.algebraize_element(a, K, v)
+    catch
+      return nothing
     end
   end
-  return v0s
+  return K, embed, recognize, v
 end
 
-
-function reconstruct_curve_g4(thetas)
-  v0s = find_delta(thetas)
-  nr_of_zeros = length(v0s)
-  if nr_of_zeros == 0
-    return reconstruct_g4_curve_generic(thetas)
-  end
-  
-   if nr_of_zeros == 1
-    return rec_g4_curve_vanishing_theta0(thetas, v0s[1])
-  end
-  
-  if nr_of_zeros == 10
-    return reconstruct_g4_hypell(thetas, v0s)
-  end
-  
-  error("Something went wrong. An impossible number of even theta characteristics is zero.")
+# The normalized multiple of a polynomial p over QQ or a number field K:
+# over QQ the primitive integral multiple with positive leading coefficient;
+# over K an integral multiple (coefficients in the maximal order O_K) and, if
+# the ideal of O_K generated by the coefficients is principal, divided by a
+# generator (so the coefficients generate O_K; unique up to a unit). With
+# reduce_units, then multiplied by the unit that makes the coefficients
+# smallest (_reduce_by_units).
+function _normalize_model(p::MPolyRingElem{QQFieldElem}; reduce_units::Bool = true)
+  d = reduce(lcm, [denominator(c) for c in coefficients(p)]; init = ZZ(1))
+  n = reduce(gcd, [numerator(d * c) for c in coefficients(p)]; init = ZZ(0))
+  p = (d // n) * p
+  return leading_coefficient(p) < 0 ? -p : p
 end
 
+function _normalize_model(p::MPolyRingElem; reduce_units::Bool = true)
+  K = base_ring(p)
+  OK = maximal_order(K)
+  d = reduce(lcm, [denominator(c, OK) for c in coefficients(p)]; init = ZZ(1))
+  p = d * p
+  I = reduce(+, [OK(c) * OK for c in coefficients(p)])
+  principal, g = is_principal_with_data(I)
+  principal && (p = inv(K(g)) * p)
+  reduce_units && (p = _reduce_by_units(p))
+  return p
+end
 
-function hard_coded_s1_s2()
-output = 
-[
-    [
-        [ [
-            [
-                (1, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 1, 0, 1, 1, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1)
-            ],
-            [
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 1, 1, 1, 1, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 1, 1, 1, 1, 1, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 1, 0, 1, 1, 0, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 0, 1, 1, 0, 0, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 0, 0, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 1, 0, 0, 0, 0, 1)
-            ],
-            [
-                (1, 0, 0, 1, 1, 0, 0, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 0, 0, 1, 1, 0, 1, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 0, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 1, 1, 1, 0, 0, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 1, 1, 1, 0, 0, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 1, 0, 0, 0, 0, 1)
-            ],
-            [
-                (1, 1, 0, 1, 1, 0, 0, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 1, 0, 1, 1, 0, 1, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 0, 1, 1, 0, 1, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 1, 0, 0, 1, 0, 1)
-            ],
-            [
-                (1, 0, 0, 1, 1, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 0, 0, 1, 1, 1, 0, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 0, 1, 0, 0, 1, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ] ],
-        [ [
-            [
-                (1, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 1, 0, 1, 1, 0, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 1, 1, 1, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 1, 1, 0, 1, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 1, 1, 1, 1, 1, 0, 0)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (1, 0, 0, 1, 1, 0, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 0, 1, 1, 0, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 0, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 0, 1, 1, 0, 0, 1, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 0, 1, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 1, 1, 0, 0, 0, 0)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (1, 1, 0, 1, 1, 0, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 1, 0, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 1, 1, 1, 0, 0, 1, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 1, 1, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 1, 1, 1, 0, 0, 0, 0)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 0, 1, 1, 0, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 0, 1, 1, 0, 1, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 1, 0, 0, 1, 0, 1)
-            ],
-            [
-                (1, 0, 0, 1, 1, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 0, 1, 1, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 0, 1, 0, 0, 1, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ] ]
-    ],
-    [
-        [ [
-            [
-                (1, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 0, 0, 1, 1, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1)
-            ],
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 1, 1, 1, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 1, 0, 1, 1, 1, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 0, 0, 1, 1, 0, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 0, 0, 1, 1),
-                (1, 0, 0, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 0, 1, 0, 0, 0, 0)
-            ],
-            [
-                (1, 0, 1, 1, 1, 0, 0, 1),
-                (1, 0, 0, 1, 1, 0, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 0, 0, 0, 0, 0, 0, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 1, 1, 0, 0, 1, 1),
-                (1, 1, 0, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 0, 1, 0, 0, 0, 0)
-            ],
-            [
-                (1, 1, 1, 1, 1, 0, 0, 1),
-                (1, 1, 0, 1, 1, 0, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 1, 0, 0, 0, 0, 0, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 0, 0, 1, 0, 1, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 0, 1)
-            ],
-            [
-                (1, 0, 0, 1, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 0, 1, 1, 1, 1, 0, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ] ],
-        [ [
-            [
-                (1, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 0, 0, 1, 1, 0, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 1, 1, 1, 1, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 1, 0, 0, 1, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 1, 0, 1, 1, 1, 0, 0)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (1, 0, 1, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 0, 1, 1, 0, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 0, 0, 0, 0, 0, 0, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 0, 1, 1, 0, 0, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 0, 0, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 0, 1, 0, 0, 0, 0)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (1, 1, 1, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 1, 0, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 0, 0, 0, 0, 0, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 1, 1, 1, 0, 0, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 1, 0, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 1, 0, 1, 0, 0, 0, 0)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 0, 1, 1, 0, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 0, 0, 1, 0, 1, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 0, 1)
-            ],
-            [
-                (1, 0, 0, 1, 1, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 1, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ] ]
-    ],
-    [
-        [ [
-            [
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 0, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 1, 1, 0, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 1, 1, 0, 0, 1, 1, 1)
-            ],
-            [
-                (1, 1, 0, 0, 1, 1, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 1, 0, 1, 1, 0, 1),
-                (1, 1, 0, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (1, 0, 1, 0, 1, 0, 1, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 0, 0, 1, 0, 0, 0, 0),
-                (1, 0, 0, 1, 1, 0, 0, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 0, 0, 0, 0, 0, 0),
-                (1, 0, 1, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 0, 0, 0, 0, 0, 1, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (1, 1, 1, 0, 1, 0, 1, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 1, 0, 1, 0, 0, 0, 0),
-                (1, 1, 0, 1, 1, 0, 0, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 1, 0, 0, 0, 0, 0, 0),
-                (1, 1, 1, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 0, 0, 0, 0, 1, 1)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (1, 0, 0, 1, 0, 1, 0, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 0, 1, 0, 1, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 0, 0, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 0, 0),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 0, 0, 0, 1, 1, 1),
-                (1, 0, 1, 0, 0, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1)
-            ],
-            [ 1, -1, ]
-        ] ],
-        [ [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 0, 1, 1, 1, 0, 0),
-                (1, 1, 1, 0, 0, 1, 1, 1)
-            ],
-            [
-                (1, 1, 0, 0, 1, 1, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 1, 1, 0, 1, 1, 0, 1),
-                (1, 1, 0, 0, 1, 1, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 0, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 0, 0, 1, 0, 0, 0, 0),
-                (1, 0, 1, 0, 1, 0, 1, 1)
-            ],
-            [
-                (1, 0, 0, 0, 0, 0, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 0, 1, 0, 0, 0, 0, 1),
-                (1, 0, 0, 0, 0, 0, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 0, 1, 0, 0, 0, 0),
-                (1, 1, 1, 0, 1, 0, 1, 1)
-            ],
-            [
-                (1, 1, 0, 0, 0, 0, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 1, 1, 0, 0, 0, 0, 1),
-                (1, 1, 0, 0, 0, 0, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (1, 0, 0, 0, 0, 1, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 1, 0, 0, 1, 0, 1),
-                (1, 0, 0, 0, 0, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 0, 0, 1, 1, 1, 0, 1),
-                (1, 0, 0, 1, 0, 1, 0, 0),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 1, 0, 1, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ] ]
-    ],
-    [
-        [ [
-            [
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 1, 1, 1, 1, 0, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 1, 1, 0, 0, 1, 1, 1)
-            ],
-            [
-                (1, 1, 1, 0, 1, 1, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 0, 0, 1, 1, 0, 1),
-                (1, 1, 0, 0, 1, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (1, 0, 1, 1, 0, 0, 0, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 0, 1, 0, 1, 0, 1, 1),
-                (1, 0, 1, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 0, 0, 0, 0, 0, 1),
-                (1, 0, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 0, 0, 0, 0, 0, 1, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (1, 1, 1, 1, 0, 0, 0, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 1, 0, 1, 0, 1, 1),
-                (1, 1, 1, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 0, 0, 0, 0, 0, 1),
-                (1, 1, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 0, 0, 0, 0, 1, 1)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (1, 0, 1, 1, 0, 1, 0, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 0, 1, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 0, 1, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 1, 0, 0, 1, 0, 0),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 0, 0, 0, 1, 1, 1),
-                (1, 0, 0, 0, 0, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1)
-            ],
-            [ 1, -1, ]
-        ] ],
-        [ [
-            [
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 1, 1, 1, 1, 0, 0),
-                (1, 1, 1, 0, 0, 1, 1, 1)
-            ],
-            [
-                (1, 1, 0, 0, 1, 1, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 1, 0, 0, 1, 1, 1, 1),
-                (1, 1, 1, 0, 1, 1, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 0, 1, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 0, 1, 1, 0, 0, 0, 0),
-                (1, 0, 1, 0, 1, 0, 1, 1)
-            ],
-            [
-                (1, 0, 0, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 0, 0, 0, 0, 0, 1, 1),
-                (1, 0, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 1, 1, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 1, 1, 0, 0, 0, 0),
-                (1, 1, 1, 0, 1, 0, 1, 1)
-            ],
-            [
-                (1, 1, 0, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 1, 0, 0, 0, 0, 1, 1),
-                (1, 1, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (1, 0, 1, 0, 0, 1, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 0, 1),
-                (1, 0, 0, 0, 0, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 0, 1, 1, 1, 1, 0, 1),
-                (1, 0, 1, 1, 0, 1, 0, 0),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 1, 0, 1, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ] ]
-    ],
-    [
-        [ [
-            [
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 1, 0, 1, 0, 1, 1, 1),
-                (1, 1, 0, 1, 1, 1, 1, 0),
-                (1, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [
-                (1, 1, 1, 0, 1, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 1, 0, 0, 1, 1, 1, 0),
-                (1, 1, 0, 0, 1, 1, 0, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 0, 0, 1, 0, 0, 1, 0),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 0, 0, 1, 1, 0, 1, 1),
-                (1, 0, 1, 0, 1, 0, 1, 1)
-            ],
-            [
-                (1, 0, 0, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 1, 0, 0, 0, 0, 1),
-                (1, 0, 0, 0, 0, 0, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 1, 0, 1, 0, 0, 1, 0),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 0, 1, 1, 0, 1, 1),
-                (1, 1, 1, 0, 1, 0, 1, 1)
-            ],
-            [
-                (1, 1, 0, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 1, 0, 0, 0, 0, 1),
-                (1, 1, 0, 0, 0, 0, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (1, 0, 1, 0, 0, 1, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 0, 0, 0, 0, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 0, 1)
-            ],
-            [
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 0, 0, 1, 0, 1, 1, 0),
-                (1, 0, 0, 1, 1, 1, 1, 1),
-                (1, 0, 1, 0, 1, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [ -1, 1, ]
-        ] ],
-        [ [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 0, 1, 1, 1, 1, 0),
-                (1, 1, 1, 0, 0, 1, 1, 1)
-            ],
-            [
-                (1, 1, 0, 0, 1, 1, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 1, 1, 0, 1, 1, 0, 1),
-                (1, 1, 0, 0, 1, 1, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (1, 0, 0, 1, 1, 0, 1, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 0, 1, 0, 0, 1, 0),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 1, 0, 1, 0, 1, 1)
-            ],
-            [
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 0, 0, 0, 0, 0, 1, 0),
-                (1, 0, 0, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 1, 0, 0, 0, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 1, 0, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 0, 1, 0, 0, 1, 0),
-                (1, 1, 1, 0, 1, 0, 1, 1)
-            ],
-            [
-                (1, 1, 0, 0, 0, 0, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 1, 1, 0, 0, 0, 0, 1),
-                (1, 1, 0, 0, 0, 0, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (1, 0, 1, 0, 0, 1, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 0, 0, 0, 0, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 0, 1)
-            ],
-            [
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 0, 1, 1, 1, 1, 1),
-                (1, 0, 0, 1, 0, 1, 1, 0),
-                (1, 0, 1, 0, 1, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (0, 1, 1, 1, 0, 1, 0, 1)
-            ],
-            [ -1, 1, ]
-        ] ]
-    ],
-    [
-        [ [
-            [
-                (1, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 0, 0, 1, 1, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1)
-            ],
-            [
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 1, 1, 1, 1, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 1, 1, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 0, 0, 1, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 0, 0, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 0, 1, 0, 0, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 0, 0, 0, 0, 1, 1)
-            ],
-            [
-                (1, 0, 0, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 0, 1, 1, 1, 0, 0, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 0, 0, 0, 0, 0, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 1, 1, 0, 0, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 0, 0, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 0, 0, 0, 0, 1, 1)
-            ],
-            [
-                (1, 1, 0, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 1, 1, 1, 1, 0, 0, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 0, 0, 0, 0, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 0, 1, 1, 1),
-                (1, 0, 0, 0, 0, 1, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 0, 1, 0, 1, 1, 0)
-            ],
-            [
-                (1, 0, 1, 1, 1, 1, 0, 1),
-                (1, 0, 0, 1, 1, 1, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 0, 0, 0, 0, 1, 1, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0)
-            ],
-            [ -1, 1, ]
-        ] ],
-        [ [
-            [
-                (1, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 0, 0, 1, 1, 1, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 1, 1, 1, 1, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 1, 0, 0, 1, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 1, 0, 1, 1, 1, 1, 0)
-            ],
-            [ -1, 1, ]
-        ], [
-            [
-                (1, 0, 1, 1, 0, 0, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 0, 0, 0, 0, 0, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 0, 1, 0, 0, 1, 0)
-            ],
-            [
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 0, 0, 1, 1, 0, 0, 1),
-                (1, 0, 1, 1, 1, 0, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 0, 0, 0, 0, 0, 1, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (1, 1, 1, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 1, 0, 1, 1, 0, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 0, 0, 0, 0, 1, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 1, 1, 1, 0, 0, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 1, 0, 0, 0, 0, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 1, 0, 1, 0, 0, 1, 0)
-            ],
-            [ 1, -1, ]
-        ], [
-            [
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 0, 1, 1, 0, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 0, 0, 1, 0, 1, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 1, 1)
-            ],
-            [
-                (1, 0, 1, 1, 1, 1, 0, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 0, 0, 1, 1, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1)
-            ],
-            [ -1, 1, ]
-        ] ]
-    ],
-    [
-        [ [
-            [
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 0, 1, 1, 1, 0, 0),
-                (1, 1, 0, 0, 1, 1, 1, 0),
-                (1, 1, 1, 1, 1, 1, 0, 0),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (1, 1, 0, 0, 1, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 0, 1, 0, 1, 1, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (1, 0, 0, 0, 0, 0, 1, 0),
-                (1, 0, 1, 1, 0, 0, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 0, 1, 0, 0, 0, 0),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 0, 0, 0, 0, 0, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 0, 1, 1, 1, 0, 1, 0),
-                (1, 0, 0, 1, 1, 0, 1, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (1, 1, 0, 0, 0, 0, 1, 0),
-                (1, 1, 1, 1, 0, 0, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 0, 1, 0, 0, 0, 0),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 1, 0, 0, 0, 0, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 1, 1, 1, 1, 0, 1, 0),
-                (1, 1, 0, 1, 1, 0, 1, 1)
-            ],
-            [ 1, 1, ]
-        ], [
-            [
-                (1, 0, 0, 1, 0, 1, 0, 0),
-                (1, 0, 1, 1, 0, 1, 0, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (0, 1, 0, 1, 0, 1, 1, 1)
-            ],
-            [
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 0, 0, 1, 1, 1, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 0, 0, 0, 0, 1, 1, 1),
-                (1, 0, 1, 1, 1, 1, 1, 0)
-            ],
-            [ 1, 1, ]
-        ] ],
-        [ [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 0, 0, 1, 1, 1, 1),
-                (1, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (1, 1, 0, 1, 1, 1, 0, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 1, 1, 1, 1, 0, 0),
-                (1, 1, 0, 0, 1, 1, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (1, 0, 0, 1, 1, 0, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 0, 0, 0, 0, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 1, 0, 1, 0)
-            ],
-            [
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 0, 0, 0, 0, 0, 1, 0),
-                (1, 0, 0, 1, 0, 0, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 1, 1, 0, 0, 0, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 1, 0, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 0, 0, 0, 0, 1, 1),
-                (1, 1, 1, 1, 1, 0, 1, 0)
-            ],
-            [
-                (1, 1, 0, 1, 0, 0, 0, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 1, 1, 0, 0, 0, 0),
-                (1, 1, 0, 0, 0, 0, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1)
-            ],
-            [ 1, 1, ]
-        ], [
-            [
-                (1, 0, 0, 0, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 1, 1, 1, 0),
-                (1, 0, 0, 1, 1, 1, 1, 1)
-            ],
-            [
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 0, 1, 0, 1, 0, 0),
-                (1, 0, 0, 0, 0, 1, 1, 0),
-                (1, 0, 1, 1, 0, 1, 0, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0)
-            ],
-            [ 1, 1, ]
-        ] ]
-    ],
-    [
-        [ [
-            [
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 1, 1, 1, 1, 1, 1),
-                (1, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [
-                (1, 1, 1, 0, 1, 1, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 0, 0, 1, 1, 1, 0),
-                (1, 1, 0, 0, 1, 1, 0, 0)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (1, 0, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 0, 0, 0, 0, 0, 1, 0),
-                (1, 0, 0, 0, 0, 0, 0, 0)
-            ],
-            [
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 0, 1, 0, 1, 0, 1, 1),
-                (1, 0, 1, 1, 0, 0, 1, 1),
-                (1, 0, 1, 1, 1, 0, 1, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (1, 1, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 0, 0, 0, 0, 1, 0),
-                (1, 1, 0, 0, 0, 0, 0, 0)
-            ],
-            [
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 1, 1, 0, 1, 0, 1, 1),
-                (1, 1, 1, 1, 0, 0, 1, 1),
-                (1, 1, 1, 1, 1, 0, 1, 0),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [ 1, 1, ]
-        ], [
-            [
-                (1, 0, 1, 0, 0, 1, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 0, 0)
-            ],
-            [
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 0, 1, 1, 0, 1, 1, 1),
-                (1, 0, 1, 1, 1, 1, 1, 0),
-                (1, 0, 1, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [ 1, 1, ]
-        ] ],
-        [ [
-            [
-                (1, 1, 1, 0, 1, 1, 0, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 1, 0, 0, 1, 1, 1, 0),
-                (1, 1, 0, 0, 1, 1, 0, 0)
-            ],
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 1, 1, 1, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (1, 0, 1, 1, 1, 0, 1, 0),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 0, 0, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 1, 0, 1, 0, 1, 1)
-            ],
-            [
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (1, 0, 0, 0, 0, 0, 1, 0),
-                (1, 0, 0, 0, 0, 0, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (1, 1, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 1, 0, 0, 0, 0, 1, 0),
-                (1, 1, 0, 0, 0, 0, 0, 0)
-            ],
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 1, 0, 1, 0, 1, 1),
-                (1, 1, 1, 1, 1, 0, 1, 0),
-                (1, 1, 1, 1, 0, 0, 1, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1)
-            ],
-            [ 1, 1, ]
-        ], [
-            [
-                (1, 0, 1, 0, 0, 1, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 1, 0),
-                (1, 0, 0, 0, 0, 1, 0, 0)
-            ],
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 1, 1, 1, 0),
-                (1, 0, 1, 1, 0, 1, 1, 1),
-                (1, 0, 1, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1)
-            ],
-            [ 1, 1, ]
-        ] ]
-    ],
-    [
-        [ [
-            [
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 1, 1, 1, 1, 0, 0),
-                (1, 1, 0, 0, 1, 1, 0, 0),
-                (1, 1, 0, 1, 1, 1, 1, 0),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (1, 1, 0, 0, 1, 1, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 0, 1, 0, 1, 0, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (1, 0, 1, 1, 1, 0, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 0, 0, 0, 0, 0, 0, 1),
-                (1, 0, 0, 1, 1, 0, 0, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 0, 0, 0, 0, 0, 0),
-                (1, 0, 1, 1, 0, 0, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 0, 0, 1, 0, 0, 1, 0)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (1, 1, 1, 1, 1, 0, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 1, 0, 0, 0, 0, 0, 1),
-                (1, 1, 0, 1, 1, 0, 0, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 1, 0, 0, 0, 0, 0, 0),
-                (1, 1, 1, 1, 0, 0, 0, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (0, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 0, 1, 0, 0, 1, 0)
-            ],
-            [ 1, 1, ]
-        ], [
-            [
-                (1, 0, 0, 0, 0, 1, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (1, 0, 1, 1, 1, 1, 1, 0),
-                (1, 0, 0, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 1, 1, 0, 1, 0, 0),
-                (1, 0, 0, 0, 0, 1, 0, 0),
-                (1, 0, 0, 1, 0, 1, 1, 0),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [ 1, 1, ]
-        ] ],
-        [ [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 0, 0, 1, 1, 0, 1),
-                (1, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (1, 1, 0, 1, 1, 1, 1, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 1, 1, 1, 1, 0, 0),
-                (1, 1, 0, 0, 1, 1, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 0, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 0, 0, 0, 0, 0, 0, 1),
-                (1, 0, 1, 1, 1, 0, 1, 0)
-            ],
-            [
-                (1, 0, 0, 1, 0, 0, 1, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 0, 1, 1, 0, 0, 0, 0),
-                (1, 0, 0, 0, 0, 0, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 1, 0, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 0, 0, 0, 0, 0, 1),
-                (1, 1, 1, 1, 1, 0, 1, 0)
-            ],
-            [
-                (1, 1, 0, 1, 0, 0, 1, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 1, 1, 0, 0, 0, 0),
-                (1, 1, 0, 0, 0, 0, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 0, 1)
-            ],
-            [ 1, 1, ]
-        ], [
-            [
-                (1, 0, 0, 0, 0, 1, 0, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 1, 1, 1, 0),
-                (1, 0, 0, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 1, 1, 0, 1, 0, 0),
-                (1, 0, 0, 0, 0, 1, 0, 0),
-                (1, 0, 0, 1, 0, 1, 1, 0),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0)
-            ],
-            [ 1, 1, ]
-        ] ]
-    ],
-    [
-        [ [
-            [
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 0, 1, 1, 1, 0, 0),
-                (1, 1, 1, 0, 1, 1, 0, 0),
-                (1, 1, 0, 1, 1, 1, 1, 0),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (1, 1, 1, 0, 1, 1, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 1, 1, 1, 0, 1, 1, 0),
-                (1, 1, 1, 1, 0, 1, 0, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (1, 0, 1, 0, 0, 0, 0, 0),
-                (1, 0, 0, 1, 0, 0, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 0, 1, 0, 0, 0, 0),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 0, 1, 0, 0, 0, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 0, 1, 1, 1, 0, 1, 0),
-                (1, 0, 1, 1, 1, 0, 0, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (1, 1, 1, 0, 0, 0, 0, 0),
-                (1, 1, 0, 1, 0, 0, 1, 0),
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 1, 0, 1, 0, 0, 0, 0),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 1, 1, 0, 0, 0, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (1, 1, 1, 1, 1, 0, 1, 0),
-                (1, 1, 1, 1, 1, 0, 0, 1)
-            ],
-            [ 1, 1, ]
-        ], [
-            [
-                (1, 0, 1, 0, 0, 1, 0, 1),
-                (0, 1, 0, 1, 1, 1, 1, 1),
-                (0, 1, 1, 0, 1, 1, 1, 1),
-                (0, 1, 0, 1, 1, 1, 0, 1),
-                (1, 0, 1, 1, 1, 1, 1, 0),
-                (1, 0, 1, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 1, 0, 1, 1, 1, 0),
-                (1, 0, 0, 1, 0, 1, 0, 0),
-                (1, 0, 1, 0, 0, 1, 0, 0),
-                (1, 0, 0, 1, 0, 1, 1, 0),
-                (0, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [ 1, 1, ]
-        ] ],
-        [ [
-            [
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 1, 1, 1, 0, 1, 0, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 1, 0, 1, 1, 0, 1),
-                (1, 1, 1, 1, 0, 1, 1, 0)
-            ],
-            [
-                (1, 1, 0, 1, 1, 1, 0, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 0, 1, 1, 1, 1, 0),
-                (1, 1, 1, 0, 1, 1, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 0, 1, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 0, 1, 0, 0, 0, 0, 1),
-                (1, 0, 1, 1, 1, 0, 1, 0)
-            ],
-            [
-                (1, 0, 0, 1, 0, 0, 0, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 0, 0, 1, 0, 0, 1, 0),
-                (1, 0, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [ -1, -1, ]
-        ], [
-            [
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (1, 1, 1, 1, 1, 0, 0, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (1, 1, 1, 0, 0, 0, 0, 1),
-                (1, 1, 1, 1, 1, 0, 1, 0)
-            ],
-            [
-                (1, 1, 0, 1, 0, 0, 0, 0),
-                (0, 1, 1, 1, 1, 1, 1, 0),
-                (1, 1, 0, 1, 0, 0, 1, 0),
-                (1, 1, 1, 0, 0, 0, 0, 0),
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (0, 1, 1, 1, 1, 1, 0, 1)
-            ],
-            [ 1, 1, ]
-        ], [
-            [
-                (1, 0, 1, 0, 0, 1, 0, 1),
-                (0, 1, 0, 1, 0, 1, 1, 1),
-                (0, 1, 1, 0, 0, 1, 1, 1),
-                (0, 1, 0, 1, 0, 1, 0, 1),
-                (1, 0, 1, 1, 1, 1, 1, 0),
-                (1, 0, 1, 1, 1, 1, 0, 1)
-            ],
-            [
-                (0, 1, 1, 0, 0, 1, 1, 0),
-                (1, 0, 0, 1, 0, 1, 0, 0),
-                (1, 0, 1, 0, 0, 1, 0, 0),
-                (1, 0, 0, 1, 0, 1, 1, 0),
-                (0, 1, 1, 1, 1, 1, 0, 1),
-                (0, 1, 1, 1, 1, 1, 1, 0)
-            ],
-            [ 1, 1, ]
-        ] ]
-    ]
-]
-return output
+# p multiplied by the unit u of O_K for which the vector of the logarithms
+# x_v = log max_i |v(u c_i)| (v the infinite places, c_i the coefficients)
+# is closest to the line spanned by (1, .., 1) (weights 1 for real and 2 for
+# complex places); found by coordinate descent on the exponents of the
+# fundamental units (rounded optimal steps). Then, if K has a real place, the
+# leading coefficient is made positive at the first real place.
+function _reduce_by_units(p::MPolyRingElem)
+  K = base_ring(p)
+  OK = maximal_order(K)
+  U, mU = unit_group(OK)
+  units = [K(mU(U[i])) for i in 2:ngens(U)]       # U[1]: the torsion units
+  places = infinite_places(K)
+  weights = [is_real(v) ? 1 : 2 for v in places]
+  value(c, v) = RSR._c64(evaluate(c, v.embedding, 128))
+  logabs(c, v) = log(abs(value(c, v)))
+  if !isempty(units)
+    cs = collect(coefficients(p))
+    x = [maximum(logabs(c, v) for c in cs) for v in places]
+    x .-= sum(weights .* x) / degree(K)
+    ls = [[logabs(u, v) for v in places] for u in units]
+    inner(a, b) = sum(weights .* a .* b)
+    e = zeros(Int, length(units))
+    for _ in 1:100
+      changed = false
+      for i in eachindex(units)
+        k = round(Int, -inner(x, ls[i]) / inner(ls[i], ls[i]))
+        k == 0 && continue
+        x .+= k .* ls[i]
+        e[i] += k
+        changed = true
+      end
+      changed || break
+    end
+    p = prod(units[i]^e[i] for i in eachindex(units)) * p
+  end
+  real_places = filter(is_real, places)
+  if !isempty(real_places) && real(value(leading_coefficient(p), real_places[1])) < 0
+    p = -p
+  end
+  return p
+end
+
+@doc raw"""
+    reconstruct_rational_curve_g4(Pi::AcbMatrix, K = QQ; place = nothing, normalize = true, reduce_units = true) -> Vector{MPolyRingElem}
+
+The canonical model [Q, Gamma] over K (QQ or a number field, embedded by
+`place`, by default its first infinite place) of a non-hyperelliptic genus 4
+curve with big period matrix Pi = [Omega_A Omega_B] (4 x 8; the rows: a basis
+of the differentials defined over K, e.g. big_period_matrix(RS) for a curve
+over K), in the coordinates of these differentials. The reconstruction over
+CC (reconstruct_curve_g4_data) is moved to these coordinates with the
+gradients of the theta functions; Q is scaled by its largest coefficient,
+Gamma is reduced modulo Q times linear forms (zero coefficients at the pivots
+of these multiples) and scaled by its largest coefficient, and the
+coefficients are recognized in K (algebraize_element). With `normalize`, Q
+and Gamma are then made integral and primitive: over QQ with coprime integer
+coefficients and positive leading coefficient, over a number field with
+coefficients in the maximal order O_K that generate O_K when their ideal is
+principal (unique up to a unit; otherwise only integral). With
+`reduce_units` (number fields, only with `normalize`) the remaining unit is
+chosen to make the coefficients small: the logarithms of the largest
+coefficient at the infinite places are balanced by the fundamental units, and
+the leading coefficient is made positive at the first real place (if any).
+Needs enough precision
+for the recognition (about 150 bits are lost in the reconstruction, see
+reconstruct_curve_g4_data). Magma: RationalReconstructCurveG4.
+"""
+function reconstruct_rational_curve_g4(Pi::AcbMatrix, K = QQ; place = nothing, normalize::Bool = true,
+                                       reduce_units::Bool = true)
+  @req nrows(Pi) == 4 && ncols(Pi) == 8 "Pi must be a 4 x 8 matrix."
+  CCin = base_ring(Pi)
+  tau = _solve_precond(Pi[:, 1:4], Pi[:, 5:8])
+  tau = (tau + transpose(tau)) * inv(CCin(2))
+  data = reconstruct_curve_g4_data(tau)
+  @req data.case !== :hyperelliptic "The curve is hyperelliptic; only non-hyperelliptic curves are supported."
+  CC = base_ring(data.tau)
+  L = _g4_coordinates_from_differentials(change_base_ring(CC, Pi), data)
+  quadric, cubic = data.curve
+  ys = gens(parent(quadric))
+  xy = [sum(L[i, j] * ys[j] for j in 1:4) for i in 1:4]
+  Qy = evaluate(quadric, xy)
+  Gy = evaluate(cubic, xy)
+  F, embed, recognize, v = _recognition_field_data(K, place, CC)
+  S, X = polynomial_ring(F, [:x, :y, :z, :w]; cached = false)
+  e2 = _exponent_vectors(4, 2)
+  e3 = _exponent_vectors(4, 3)
+  monomial(e) = prod(X[j]^e[j] for j in 1:4)
+  # the quadric, scaled by its largest coefficient
+  qc = [coeff(Qy, e) for e in e2]
+  qs = qc[argmax(map(_abs64, qc))]
+  Qk = [recognize(c / qs) for c in qc]
+  @req all(!isnothing, Qk) "Could not recognize the coefficients of the quadric in K (more precision needed?)."
+  QK = sum(Qk[k] * monomial(e2[k]) for k in eachindex(e2))
+  # the cubic modulo Q * (linear forms): zero coefficients at the pivots of
+  # the multiples X_k Q
+  U = matrix(F, 4, 20, [coeff(QK * X[k], e) for k in 1:4 for e in e3])
+  _, Ur = rref(U)
+  v = [coeff(Gy, e) for e in e3]
+  for k in 1:4
+    pc = findfirst(c -> !iszero(Ur[k, c]), 1:20)
+    f = v[pc]
+    for c in 1:20
+      iszero(Ur[k, c]) || (v[c] -= f * embed(Ur[k, c]))
+    end
+    v[pc] = zero(CC)
+  end
+  cs = v[argmax(map(_abs64, v))]
+  Gk = [recognize(c / cs) for c in v]
+  @req all(!isnothing, Gk) "Could not recognize the coefficients of the cubic in K (more precision needed?)."
+  GK = sum(Gk[k] * monomial(e3[k]) for k in eachindex(e3))
+  normalize && return [_normalize_model(QK; reduce_units), _normalize_model(GK; reduce_units)]
+  return [QK, GK]
 end

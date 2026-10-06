@@ -1,25 +1,9 @@
 
 
 
-function manual_kernel(M)
-  T  = Complex{Float64x2}          # ~128 digits; Float64x4 ≈ 64 digits
-  A  = T.(M)                   # your Complex{BigFloat} matrix, odd columns only
-  A0 = ComplexF64.(A)              # or Complex{Float64x2} if Float64 is too coarse
-
-  # 1. Rank and pivot choice (cheap)
-  Fc = qr(A0, ColumnNorm())
-  d  = abs.(diag(Fc.R));  r = count(>(1e-10 * d[1]), d)   # inspect the gap in d!
-
-  F = qr(copy(A'))                       # n×m Householder QR, O(n·m²)
-  n = ncols(A)
-  E = zeros(T, n, n - r)
-  for j in 1:n-r
-      E[r+j, j] = one(T)
-  end
-  N = F.Q * E  
-  return N
-end
-
+# Kernels are computed with numerical_kernel (RieSrf/Numerics/NumericalKernel.jl):
+# certified solve on the pivot block, error on an ambiguous rank gap.
+const RSR = Hecke.RiemannSurfaces
 
 GF2 = GF(2)
 odds = odd_theta_characteristics(g-1)
@@ -58,49 +42,43 @@ rho8 = GF2.([0,0,1,1,1,0,0,0])
 
 R = [rho1, rho2, rho3, rho4, rho5, rho6, rho7, rho8]
 
-prec = 150
-setprecision(BigFloat, prec)
-
 for r in R
   M_prym = construct_fay_matrix(g-1, thetas_prym, r)
   bigM_prym = [bigM_prym ; M_prym]
 end
 
-bigM_float = (x->Complex{Float64x2}(Complex{BigFloat}(x))).(collect(matrix(bigM)[:,odd_indices]))
-K = manual_kernel(bigM_float;prec = :x2)[1]
-#K = permutedims(nullspace(bigM_float))
-
-
-bigM_float_prym = Complex{BigFloat}.(collect(matrix(bigM_prym)[:,odd_prym_indices]))
-K_prym = manual_kernel(bigM_float_prym;prec = :x2)[1]
+# Rows of K (496 x g): the tangent hyperplanes l_kappa of X; rows of K_prym
+# (120 x (g-1)): the tritangent planes m_delta of the Prym.
+K, rank_K, res_K = RSR.numerical_kernel([v[odd_indices] for v in bigM])
+@req ncols(K) == g "Fay matrix of X: kernel of dimension $(ncols(K)), expected $g"
+K_prym, rank_K_prym, res_K_prym = RSR.numerical_kernel([v[odd_prym_indices] for v in bigM_prym])
+@req ncols(K_prym) == g - 1 "Fay matrix of the Prym: kernel of dimension $(ncols(K_prym)), expected $(g - 1)"
 
 I = lift_prym_indices(g)
 
 
-HiHis = []
-for i in (1:length(odds)) 
+# Entries (i >= j, column by column) of l_kappa l_{kappa+eta}^T + l_{kappa+eta} l_kappa^T
+# and of m_delta m_delta^T.
+CC = base_ring(K)
+lower(n) = [(i, j) for j in 1:n for i in j:n]
+HiHis2 = zero_matrix(CC, length(odds), length(lower(g)))
+li_sqs2 = zero_matrix(CC, length(odds), length(lower(g - 1)))
+for i in (1:length(odds))
   i1, i2 = I[i]
-  L = K[i1,:] * transpose(K[i2, :])
-  LL = L + transpose(L)
-  HiHi = reduce(vcat, [[LL[i,j] for i in (j:g)] for j in (1:g)])
-
-  push!(HiHis, HiHi)
+  for (k, (a, b)) in enumerate(lower(g))
+    HiHis2[i, k] = K[i1, a] * K[i2, b] + K[i2, a] * K[i1, b]
+  end
+  for (k, (a, b)) in enumerate(lower(g - 1))
+    li_sqs2[i, k] = K_prym[i, a] * K_prym[i, b]
+  end
 end
 
-li_sqs = []
-for i in (1:length(odds)) 
-  L = K_prym[i,:] * transpose(K_prym[i, :])
-  li_sq = reduce(vcat, [[L[i,j] for i in (j:g-1)] for j in (1:g-1)])
-  push!(li_sqs, li_sq)
-end
-
-HiHis2 = mapreduce(permutedims, vcat, HiHis)
-li_sqs2 = mapreduce(permutedims, vcat, li_sqs)
-O = manual_kernel(permutedims(li_sqs2);prec = :x2)[1]
-TT =  permutedims(O) * HiHis2
-rank(TT)
-
-svd(TT)
+# O: the relations among the m_delta^2; pushed through m_delta^2 -> l_kappa l_{kappa+eta}
+# they give the quadrics (rank_TT should be 3).
+O, rank_li, _ = RSR.numerical_kernel(transpose(li_sqs2))
+TT = transpose(O) * HiHis2
+_, rank_TT, _ = RSR.numerical_kernel(TT)
+rank_TT
 
 
 #Correcting signs (in the g = 4 case) for reconstructing a genus 5 curve.

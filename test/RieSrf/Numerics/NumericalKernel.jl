@@ -85,6 +85,15 @@
   A7 = matrix(CC, 1, 1, [CC(1) / CC(0)])
   @test_throws ArgumentError NK(A7)
 
+  # ---- pivots (_numerical_kernel_data) and the midpoint residual ----
+  data = RSM._numerical_kernel_data(Acc)
+  @test data.rank == r0 && length(data.pivot_columns) == r0 && length(data.pivot_rows) == r0
+  @test rank(matrix(ZZ, P[data.pivot_rows, data.pivot_columns])) == r0
+  @test RSM._log2_relative_residual(Acc, data.kernel) < -900
+  data0 = RSM._numerical_kernel_data(Acc[1:m, data.pivot_columns]; nullity = 0)
+  @test ncols(data0.kernel) == 0 && length(data0.pivot_rows) == r0
+  @test rank(matrix(ZZ, P[data0.pivot_rows, data.pivot_columns])) == r0
+
   # ---- Vector-of-rows convenience method ----
   vv = [[CC(P[i, j]) for j in 1:n] for i in 1:m]
   Nv, rv, _ = NK(vv)

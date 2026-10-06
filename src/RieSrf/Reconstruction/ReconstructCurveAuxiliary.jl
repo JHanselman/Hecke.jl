@@ -2,14 +2,11 @@
 
 #The sign flip that occurs when adding characteristics
 #together.
+# (-1)^(2 a . floor(b)) for char = [a; b] (char J floor(char) with J = [0 1; 0 0])
 function _sign_flip(char::Vector{QQFieldElem})
   g = div(length(char), 2)
-  v = [floor(QQFieldElem, c) for c in char]
-  zer = zero_matrix(QQ, g, g)
-  id = identity_matrix(QQ, g)
-  J = [zer id; zer zer]
-  result = (-1)^(Int(2*((transpose(char * J) * v))))
-  return result
+  s = sum(char[i] * floor(QQFieldElem, char[g + i]) for i in 1:g)
+  return isodd(Int(2 * s)) ? -1 : 1
 end
 
 #Resolve the sign flip in the theta characteristic
