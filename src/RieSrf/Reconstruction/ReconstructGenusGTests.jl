@@ -203,7 +203,7 @@ function test_random_quadrics(g::Int; count::Int = 5, prec::Int = 500, loss::Int
       push!(results, result)
       if hasproperty(result, :log2_difference)
         println("curve $i: log2 difference $(result.log2_difference), periods $(round(result.time_periods, digits = 1)) s, reconstruction $(round(result.time_reconstruction, digits = 1)) s")
-        println("  stages: ", join(["$k $(round(v, digits = 1)) s" for (k, v) in Base.pairs(result.times)], ", "))
+        println("  stages: ", join(["$k $(round(v, digits = 1)) s" for (k, v) in zip(keys(result.times), values(result.times))], ", "))
       else
         println("curve $i: ", sprint(showerror, result.error))
       end
@@ -297,4 +297,456 @@ function fay_singular_values(g::Int, thetas, relations; count::Int = 100)
   end
   s = LA.svdvals(A)
   return reverse(s[end - min(count, length(s)) + 1:end]) ./ s[1]
+end
+
+################################################################################
+#
+#  Off the Jacobian locus: the Pryms of random genus 6 curves
+#
+################################################################################
+
+# The small period matrix of a big period matrix (symmetrized)
+function _small_period_matrix(Pi::AcbMatrix)
+  g = nrows(Pi)
+  tau = RSR._solve_precond(Pi[:, 1:g], Pi[:, g+1:2*g])
+  return (tau + transpose(tau)) * inv(base_ring(Pi)(2))
+end
+
+# A summary of the info of reconstruct_quadrics_from_thetas: the residuals,
+# the number of quadrics found (singular values of the relation matrix above
+# 2^(-prec/2); (g-2)(g-3)/2 for a generic Jacobian) and the singular values:
+# with diagnostics, all of them at full precision (log2, relative) for the
+# squares and for the relation matrix, and log2 of the smallest of the
+# Float64 Fay matrices of the curve and of its Prym
+function _quadrics_summary(info, g::Int, prec::Int)
+  r1(x) = round(x, digits = 1)
+  log2s(v) = [r1(RSR._safe_log2(x)) for x in v]
+  if hasproperty(info, :quadric_singular_values_log2)
+    quadric_sv = r1.(info.quadric_singular_values_log2)
+    squares_sv = r1.(info.squares_singular_values_log2)
+    rank = count(>(-prec / 2), info.quadric_singular_values_log2)
+  else
+    quadric_sv = log2s(info.quadric_singular_values)
+    squares_sv = Float64[]
+    rank = count(>(2.0^(-prec / 2)), info.quadric_singular_values)
+  end
+  fay_sv = hasproperty(info, :fay_singular_values) ? log2s(info.fay_singular_values) : Float64[]
+  prym_fay_sv = hasproperty(info, :prym_fay_singular_values) ? log2s(info.prym_fay_singular_values) : Float64[]
+  return (gradients = info.gradients, prym_gradients = info.prym_gradients,
+          relations = info.relations, quadrics = info.quadrics,
+          rank = rank, expected = div((g - 2) * (g - 3), 2),
+          quadric_singular_values_log2 = quadric_sv, squares_singular_values_log2 = squares_sv,
+          fay_singular_values_log2 = fay_sv, prym_fay_singular_values_log2 = prym_fay_sv)
+end
+
+function _show_quadrics_summary(label, summary)
+  println(label, ":")
+  println("  residuals (log2): gradients $(summary.gradients), prym gradients $(summary.prym_gradients), ",
+          "relations $(summary.relations), quadrics $(summary.quadrics)")
+  println("  quadrics found: $(summary.rank) (generic Jacobian: $(summary.expected))")
+  println("  singular values (log2, relative), relation matrix: ", summary.quadric_singular_values_log2)
+  isempty(summary.squares_singular_values_log2) ||
+    println("  singular values (log2, relative), squares of the Prym gradients: ", summary.squares_singular_values_log2)
+  isempty(summary.fay_singular_values_log2) ||
+    println("  smallest singular values (log2, Float64), Fay matrix: ", summary.fay_singular_values_log2)
+  isempty(summary.prym_fay_singular_values_log2) ||
+    println("  smallest singular values (log2, Float64), Fay matrix of its Prym: ", summary.prym_fay_singular_values_log2)
+end
+
+@doc raw"""
+    test_random_prym_quadrics(; count = 5, prec = 500, control = true, coefficients = -3:3,
+                              curve_sign_data, prym_sign_data, sign_data, kw...) -> Vector
+
+For `count` random genus 6 curves (canonical_test_curve_g6, period matrix of
+riemann_surface_with_differentials at `prec` bits): prym_quadrics, i.e. the
+reconstruction of quadrics applied to the theta constants of the Prym
+(dimension 5, a generic principally polarized abelian variety, not a
+Jacobian). Prints per curve the residuals (log2; about -prec if the
+relations hold), the number of quadrics found (3 for a genus 5 Jacobian)
+and the singular values (_show_quadrics_summary: all of them, at full
+precision, for the relation matrix and the squares; the smallest of the
+Float64 Fay matrices). With
+`control`, the same for a random genus 5 curve (canonical_test_curve_g5,
+reconstruct_quadrics_from_thetas), for comparison. `curve_sign_data`: genus
+6 (for theta_method = :riemann), `prym_sign_data`: genus 5, `sign_data`:
+genus 4; further keywords are passed to prym_quadrics. Returns the
+summaries (or the errors, with the curves).
+"""
+function test_random_prym_quadrics(; count::Int = 5, prec::Int = 500, control::Bool = true,
+                                   coefficients = -3:3, curve_sign_data = nothing,
+                                   prym_sign_data = nothing, sign_data = nothing, kw...)
+  results = Any[]
+  show = _show_quadrics_summary
+  if control
+    curve = canonical_test_curve_g5(; coefficients = coefficients)
+    try
+      RS = riemann_surface_with_differentials(curve.plane, curve.numerators, prec)
+      _, tau = Hecke.siegel_reduction(_small_period_matrix(RSR.big_period_matrix(RS)))
+      thetas = _theta_constants_by_method(tau, :riemann; curve_sign_data = prym_sign_data)
+      J = reconstruct_quadrics_from_thetas(5, thetas; sign_data = sign_data, strict = false, diagnostics = true)
+      summary = _quadrics_summary(J.info, 5, prec)
+      push!(results, (jacobian = true, summary = summary, curve = curve))
+      show("genus 5 Jacobian (control)", summary)
+    catch err
+      push!(results, (jacobian = true, error = err, curve = curve))
+      println("genus 5 Jacobian (control): ", sprint(showerror, err))
+    end
+  end
+  for i in 1:count
+    curve = canonical_test_curve_g6(; coefficients = coefficients)
+    try
+      t = @elapsed begin
+        RS = riemann_surface_with_differentials(curve.plane, curve.numerators, prec)
+        tau = _small_period_matrix(RSR.big_period_matrix(RS))
+        P = prym_quadrics(tau; curve_sign_data = curve_sign_data, prym_sign_data = prym_sign_data,
+                          sign_data = sign_data, kw...)
+      end
+      summary = _quadrics_summary(P.info, 5, prec)
+      push!(results, (jacobian = false, summary = summary, curve = curve, quadrics = P.quadrics))
+      show("Prym $i ($(round(t, digits = 1)) s)", summary)
+    catch err
+      push!(results, (jacobian = false, error = err, curve = curve))
+      println("Prym $i: ", sprint(showerror, err))
+    end
+  end
+  return results
+end
+
+################################################################################
+#
+#  Pryms of plane quintics
+#
+#  A smooth plane quintic C has genus 6 and the odd theta characteristic
+#  kappa = O(1) with h^0 = 3: grad theta[kappa](0) = 0. By Mumford, the Prym
+#  of C for eta is a Jacobian (of a genus 5 curve) if h^0(kappa + eta) is
+#  even, and the intermediate Jacobian of a cubic threefold (not a Jacobian)
+#  if it is odd. The parity of h^0(kappa + eta) is that of the
+#  characteristic kappa + eta; for the eta = (0..0; 1 0..0) of prym_thetas
+#  (b_1 = 1) it is even iff a_1(kappa) = 1.
+#
+################################################################################
+
+@doc raw"""
+    plane_quintic_test_curve(; coefficients = -3:3) -> MPolyRingElem
+
+A random smooth plane quintic F(x, y) over QQ (coefficients in `coefficients`,
+full Newton polygon; smooth, i.e. genus 6, certified modulo a prime as for
+Baker's basis).
+"""
+function plane_quintic_test_curve(; coefficients = -3:3)
+  R, (x, y) = polynomial_ring(QQ, [:x, :y]; cached = false)
+  while true
+    F = sum(QQ(rand(coefficients)) * x^i * y^j for i in 0:5 for j in 0:5 - i)
+    total_degree(F) == 5 || continue
+    length(RSR._newton_polygon_interior_points(F)) == 6 || continue
+    RSR._baker_certified(F, 6) || continue
+    return F
+  end
+end
+
+@doc raw"""
+    test_random_plane_quintic_pryms(; count = 5, prec = 500, coefficients = -3:3, curve_fay_relations = nothing,
+                                    curve_sign_data, prym_sign_data, sign_data, kw...) -> Vector
+
+For `count` random smooth plane quintics (plane_quintic_test_curve, genus 6,
+Baker's basis, `prec` bits): prym_quadrics (the reconstruction applied to the
+Prym for eta = (0..0; 1 0..0)), and the type of this Prym: kappa = O(1) is
+the odd characteristic whose gradient vanishes (the zero row of the Fay
+kernel of the quintic, with `curve_fay_relations`, the genus 6 relations;
+`kappa_gap`: log2 of the ratio of its row to the next smallest), and the
+Prym is a Jacobian iff kappa + eta is even (Mumford). Prints this and the
+summary of _show_quadrics_summary per curve. `curve_sign_data`: genus 6,
+`prym_sign_data`: genus 5, `sign_data`: genus 4; further keywords are passed
+to prym_quadrics.
+"""
+function test_random_plane_quintic_pryms(; count::Int = 5, prec::Int = 500, coefficients = -3:3,
+                                         curve_fay_relations = nothing, curve_sign_data = nothing,
+                                         prym_sign_data = nothing, sign_data = nothing, kw...)
+  results = Any[]
+  odds = odd_theta_characteristics(6)
+  for i in 1:count
+    F = plane_quintic_test_curve(; coefficients = coefficients)
+    try
+      t = @elapsed begin
+        RS = RSR.riemann_surface(F, prec; superelliptic = false, model = :original)
+        tau = _small_period_matrix(RSR.big_period_matrix(RS))
+        P = prym_quadrics(tau; curve_sign_data = curve_sign_data, prym_sign_data = prym_sign_data,
+                          sign_data = sign_data, kw...)
+        K, _ = odd_theta_gradient_kernel(6, P.curve_thetas; relations = curve_fay_relations)
+      end
+      norms = [maximum(RSR._abs64(K[r, c]) for c in 1:6) for r in 1:nrows(K)]
+      order = sortperm(norms)
+      kappa = odds[order[1]]
+      kappa_gap = RSR._safe_log2(norms[order[1]] / norms[order[2]])
+      jacobian = isodd(kappa[1])
+      summary = _quadrics_summary(P.info, 5, prec)
+      push!(results, (curve = F, kappa = kappa, kappa_gap = kappa_gap, prym_is_jacobian = jacobian,
+                      summary = summary, quadrics = P.quadrics))
+      println("plane quintic $i ($(round(t, digits = 1)) s): kappa = $kappa (gap 2^$(round(kappa_gap, digits = 1))), ",
+              "kappa + eta ", jacobian ? "even: the Prym is a Jacobian" : "odd: the Prym is the intermediate Jacobian of a cubic threefold")
+      _show_quadrics_summary("  Prym", summary)
+    catch err
+      push!(results, (curve = F, error = err))
+      println("plane quintic $i: ", sprint(showerror, err))
+    end
+  end
+  return results
+end
+
+################################################################################
+#
+#  Does the reconstruction separate Jacobians from non-Jacobians?
+#
+################################################################################
+
+struct _ImpreciseTau <: Exception
+  bits::Float64
+end
+
+# One line of evidence of classify_jacobian
+function _evidence_line(c)
+  e = c.evidence
+  parts = String[]
+  haskey(e, :schottky_jung_rank) && push!(parts, "Schottky-Jung rank $(e.schottky_jung_rank)/$(e.schottky_jung_needed)")
+  haskey(e, :gradient_residual) && push!(parts, "Fay residual $(round(e.gradient_residual, digits = 1))")
+  haskey(e, :prym_gradient_residual) && push!(parts, "Prym Fay residual $(e.prym_gradient_residual)")
+  haskey(e, :squares_singular_values_log2) &&
+    push!(parts, "smallest squares singular value 2^$(round(minimum(e.squares_singular_values_log2), digits = 1))")
+  haskey(e, :quadric_count) && push!(parts, "quadrics $(e.quadric_count) (gap $(round(e.quadric_gap_bits, digits = 1)) bits)")
+  haskey(e, :quadric_singular_values_log2) &&
+    push!(parts, "relation matrix singular values (log2) $(round.(e.quadric_singular_values_log2[1:min(7, end)], digits = 1))")
+  for key in (:schottky_jung_error, :gradient_kernel_error, :prym_gradient_kernel_error)
+    haskey(e, key) && push!(parts, "$key: $(first(e[key], 120))")
+  end
+  return join(parts, "; ")
+end
+
+@doc raw"""
+    hyperelliptic_test_curve(g; coefficients = -3:3) -> MPolyRingElem
+
+y^2 - f(x) for a random squarefree f of degree 2g + 2 with coefficients in
+`coefficients` (a hyperelliptic curve of genus g).
+"""
+function hyperelliptic_test_curve(g::Int; coefficients = -3:3)
+  Qt, t = polynomial_ring(QQ, :t; cached = false)
+  R, (x, y) = polynomial_ring(QQ, [:x, :y]; cached = false)
+  while true
+    f = sum(QQ(rand(coefficients)) * t^i for i in 0:2*g+2)
+    degree(f) == 2*g + 2 && is_squarefree(f) || continue
+    return y^2 - sum(coeff(f, i) * x^i for i in 0:2*g+2)
+  end
+end
+
+@doc raw"""
+    product_period_matrix(partition, prec; coefficients = -3:3) -> AcbMatrix, Vector
+
+The block diagonal period matrix of a product of Jacobians of dimensions
+`partition` (e.g. [2, 3]), Siegel reduced: random_siegel_matrix for
+dimensions 1, 2, 3 (a generic principally polarized abelian variety of
+dimension at most 3 is a Jacobian), a random plane curve of genus 4
+(the genus 4 tests' _random_g4_curve(:generic)) for 4, a random canonical
+curve of genus 5 for 5. Also returns the curves (nothing for the random
+matrices).
+"""
+function product_period_matrix(partition::Vector{Int}, prec::Int; coefficients = -3:3)
+  @req all(h -> 1 <= h <= 5, partition) "The dimensions must be between 1 and 5."
+  CC = AcbField(prec)
+  g = sum(partition)
+  T = zero_matrix(CC, g, g)
+  curves = Any[]
+  offset = 0
+  for h in partition
+    if h <= 3
+      tau = random_siegel_matrix(h, prec)
+      push!(curves, nothing)
+    elseif h == 4
+      tau = nothing
+      for _ in 1:20
+        f = RSR._random_g4_curve(:generic; coeff_range = coefficients)
+        RS = RSR.riemann_surface(f, prec; superelliptic = false, model = :original)
+        t = _small_period_matrix(RSR.big_period_matrix(RS))
+        nrows(t) == 4 || continue
+        tau = t
+        push!(curves, f)
+        break
+      end
+      @req tau !== nothing "No curve of genus 4 found."
+    else
+      curve = canonical_test_curve_g5(; coefficients = coefficients)
+      RS = riemann_surface_with_differentials(curve.plane, curve.numerators, prec)
+      tau = _small_period_matrix(RSR.big_period_matrix(RS))
+      push!(curves, curve.plane)
+    end
+    for i in 1:h, j in 1:h
+      T[offset + i, offset + j] = CC(tau[i, j])
+    end
+    offset += h
+  end
+  return Hecke.siegel_reduction(T)[2], curves
+end
+
+@doc raw"""
+    test_jacobian_classification(; jacobians = 3, generic_pryms = 3, quintics = 6, hyperelliptic = 2,
+                                 products = 1, partitions = [[1, 4], [2, 3], [1, 1, 3], [1, 2, 2], [1, 1, 1, 2]],
+                                 prec = 500,
+                                 curve_sign_data_5, curve_sign_data_6, sign_data_4, fay_relations_6,
+                                 certified_fixed_signs = false, gap_bits = nothing) -> Vector
+
+A @testset for classify_jacobian on principally polarized abelian varieties
+of dimension 5 whose type is known:
+
+  - Jacobians of random genus 5 curves (canonical_test_curve_g5): :jacobian;
+  - Pryms of random genus 6 curves (canonical_test_curve_g6; generic, not
+    Jacobians): :not_jacobian;
+  - Pryms of random smooth plane quintics (plane_quintic_test_curve): by
+    Mumford a Jacobian if kappa + eta is even (kappa = O(1), the odd
+    characteristic with vanishing gradient, found from the Fay kernel of the
+    quintic), the intermediate Jacobian of a cubic threefold if it is odd:
+    :jacobian resp. :not_jacobian;
+  - Jacobians of random hyperelliptic curves of genus 5
+    (hyperelliptic_test_curve) and `products` products of Jacobians for each
+    partition of 5 in `partitions` (product_period_matrix): not tested
+    (expected :unknown), only reported, to see what the reconstruction does.
+    These have vanishing even theta constants, so their theta constants come
+    from acb_theta_all and classify_jacobian runs with allow_vanishing.
+
+The sign data: `curve_sign_data_5` (genus 5; the Jacobians and the signs of
+the Pryms), `curve_sign_data_6` (genus 6, the theta constants of the genus
+6 curves), `sign_data_4` (genus 4, for classify_jacobian); `fay_relations_6`
+for the Fay kernel of the quintics. Prints per case the expected and the
+found verdict with the evidence, and a summary. :inconclusive counts as a
+failure, except for a period matrix known to less than half the precision
+(reported as :inconclusive at stage :period_matrix and not tested: a
+problem of the period matrix, not of the classification). Returns the
+results.
+"""
+function test_jacobian_classification(; jacobians::Int = 3, generic_pryms::Int = 3, quintics::Int = 6,
+                                      hyperelliptic::Int = 2, products::Int = 1,
+                                      partitions = [[1, 4], [2, 3], [1, 1, 3], [1, 2, 2], [1, 1, 1, 2]],
+                                      prec::Int = 500, coefficients = -3:3, curve_sign_data_5 = nothing,
+                                      curve_sign_data_6 = nothing, sign_data_4 = nothing,
+                                      fay_relations_6 = nothing, certified_fixed_signs::Bool = false,
+                                      gap_bits = nothing)
+  results = Any[]
+  odds6 = odd_theta_characteristics(6)
+  # the period matrix must be known to at least half the precision (some
+  # curves give large radii): else :inconclusive, before the theta constants
+  struct_precision(tau) = -maximum(RSR._log2_relative_radius(tau[i, j]) for i in 1:nrows(tau), j in 1:ncols(tau))
+  function thetas_of(tau, data)
+    bits = struct_precision(tau)
+    bits < prec / 2 && throw(_ImpreciseTau(bits))
+    return _theta_constants_by_method(Hecke.siegel_reduction(tau)[2], :riemann; curve_sign_data = data,
+                                      certified_fixed_signs = certified_fixed_signs)
+  end
+  classify(thetas; allow_vanishing = false) = classify_jacobian(5, thetas; sign_data = sign_data_4, gap_bits = gap_bits,
+                                                                allow_vanishing = allow_vanishing)
+  # with vanishing even theta constants (hyperelliptic curves, products) the
+  # signs by Riemann's relations are not available: acb_theta_all
+  function thetas_flint(tau)
+    bits = struct_precision(tau)
+    bits < prec / 2 && throw(_ImpreciseTau(bits))
+    t = Hecke.siegel_reduction(tau)[2]
+    return Hecke.thetas([zero(base_ring(t)) for _ in 1:nrows(t)], t)
+  end
+  function record(kind, expected, compute)
+    t = time()
+    found = try
+      compute()
+    catch err
+      err isa _ImpreciseTau ?
+        (verdict = :inconclusive, stage = :period_matrix, error = "period matrix known to $(round(err.bits, digits = 1)) bits only", extra = "") :
+        (verdict = :error, stage = :setup, error = sprint(showerror, err), extra = "")
+    end
+    line = hasproperty(found, :classification) ? _evidence_line(found.classification) : found.error
+    extra = hasproperty(found, :extra) ? found.extra : ""
+    println(rpad(kind, 34), " expected $(rpad(string(expected), 13)) found $(rpad(string(found.verdict), 13)) ",
+            "($(found.stage), $(round(time() - t, digits = 1)) s) $extra")
+    println("    ", line)
+    push!(results, (kind = kind, expected = expected, verdict = found.verdict, stage = found.stage, result = found))
+  end
+  for i in 1:jacobians
+    record("genus 5 Jacobian $i", :jacobian, () -> begin
+      curve = canonical_test_curve_g5(; coefficients = coefficients)
+      RS = riemann_surface_with_differentials(curve.plane, curve.numerators, prec)
+      c = classify(thetas_of(_small_period_matrix(RSR.big_period_matrix(RS)), curve_sign_data_5))
+      (verdict = c.verdict, stage = c.stage, classification = c, curve = curve)
+    end)
+  end
+  for i in 1:generic_pryms
+    record("Prym of a genus 6 curve $i", :not_jacobian, () -> begin
+      curve = canonical_test_curve_g6(; coefficients = coefficients)
+      RS = riemann_surface_with_differentials(curve.plane, curve.numerators, prec)
+      thetas = thetas_of(_small_period_matrix(RSR.big_period_matrix(RS)), curve_sign_data_6)
+      thetas_P, _ = _prym_theta_constants(6, thetas, curve_sign_data_5)
+      c = classify(thetas_P)
+      (verdict = c.verdict, stage = c.stage, classification = c, curve = curve)
+    end)
+  end
+  for i in 1:quintics
+    F = plane_quintic_test_curve(; coefficients = coefficients)
+    RS = RSR.riemann_surface(F, prec; superelliptic = false, model = :original)
+    local thetas, kappa, gap, expected
+    try
+      thetas = thetas_of(_small_period_matrix(RSR.big_period_matrix(RS)), curve_sign_data_6)
+      K, _ = odd_theta_gradient_kernel(6, thetas; relations = fay_relations_6)
+      norms = [maximum(RSR._abs64(K[r, c]) for c in 1:6) for r in 1:nrows(K)]
+      order = sortperm(norms)
+      kappa, gap = odds6[order[1]], RSR._safe_log2(norms[order[1]] / norms[order[2]])
+      expected = isodd(kappa[1]) ? :jacobian : :not_jacobian
+    catch err
+      message = err isa _ImpreciseTau ? "period matrix known to $(round(err.bits, digits = 1)) bits only" :
+                sprint(showerror, err)
+      verdict = err isa _ImpreciseTau ? :inconclusive : :error
+      println(rpad("Prym of a plane quintic $i", 34), " type unknown, $verdict: ", message)
+      push!(results, (kind = "Prym of a plane quintic $i", expected = :unknown, verdict = verdict,
+                      stage = :setup, result = (curve = F, error = err)))
+      continue
+    end
+    record("Prym of a plane quintic $i", expected, () -> begin
+      thetas_P, _ = _prym_theta_constants(6, thetas, curve_sign_data_5)
+      c = classify(thetas_P)
+      (verdict = c.verdict, stage = c.stage, classification = c, curve = F, kappa = kappa,
+       extra = "kappa $(kappa) (gap 2^$(round(gap, digits = 1)))")
+    end)
+  end
+  # hyperelliptic curves and products of Jacobians (vanishing theta
+  # constants; what the reconstruction does is the question: expected
+  # :unknown)
+  for i in 1:hyperelliptic
+    record("hyperelliptic curve of genus 5 $i", :unknown, () -> begin
+      F = hyperelliptic_test_curve(5; coefficients = coefficients)
+      RS = RSR.riemann_surface(F, prec)
+      c = classify(thetas_flint(_small_period_matrix(RSR.big_period_matrix(RS))); allow_vanishing = true)
+      (verdict = c.verdict, stage = c.stage, classification = c, curve = F,
+       extra = "$(c.evidence.vanishing_theta_constants) vanishing theta constants")
+    end)
+  end
+  for partition in partitions, i in 1:products
+    record("product $(join(partition, "+")) $i", :unknown, () -> begin
+      tau, curves = product_period_matrix(partition, prec; coefficients = coefficients)
+      c = classify(thetas_flint(tau); allow_vanishing = true)
+      (verdict = c.verdict, stage = c.stage, classification = c, curves = curves,
+       extra = "$(c.evidence.vanishing_theta_constants) vanishing theta constants")
+    end)
+  end
+  println()
+  for kind in ("genus 5 Jacobian", "Prym of a genus 6 curve", "Prym of a plane quintic",
+               "hyperelliptic curve", "product")
+    rs = filter(r -> startswith(r.kind, kind), results)
+    isempty(rs) && continue
+    found = join(["$v $(count(r -> r.verdict === v, rs))" for v in unique(r.verdict for r in rs)], ", ")
+    if all(r -> r.expected === :unknown, rs)
+      println(rpad(kind, 26), "found: ", found)
+    else
+      right = count(r -> r.verdict === r.expected, rs)
+      println(rpad(kind, 26), "$right of $(length(rs)) as expected; found: ", found)
+    end
+  end
+  @testset "Jacobians and non-Jacobians of dimension 5" begin
+    for r in results
+      (r.expected === :unknown || r.stage in (:period_matrix, :setup) && r.verdict === :inconclusive) && continue
+      @test r.verdict === r.expected
+    end
+  end
+  return results
 end

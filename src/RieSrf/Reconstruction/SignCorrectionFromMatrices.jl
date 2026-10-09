@@ -135,8 +135,17 @@ function _relation_for_pair(g::Int, thetas, term, M1::FqMatrix)
   fixed_term = sort([char_to_index(collect(c)) for c in term])
   position = findfirst(==(fixed_term), data.term_tup)
   (position === nothing || data.coefficients[position] == 0) && return nothing
-  test, rel = _relation_from_terms(thetas, data)
+  # (theta constants that do not satisfy Riemann's relations, e.g. those of
+  # Schottky-Jung for a non-Jacobian, can make LLL fail on huge balls)
+  test, rel = try
+    _relation_from_terms(thetas, data)
+  catch err
+    err isa InexactError || rethrow()
+    false, nothing
+  end
   test || return nothing
+  # Riemann's relations have coefficients +-1 (with the sign flips)
+  all(x -> abs(x[2]) == 1, rel) || return nothing
   index = findfirst(x -> x[1] == fixed_term, rel)
   index === nothing && return nothing
   s = rel[index][2]

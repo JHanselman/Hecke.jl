@@ -398,9 +398,20 @@ the file _default_fay_data_file(g) if it exists; find_fay_relations for
 this curve (slow for g >= 6: save its result).
 """
 function odd_theta_gradient_kernel(g::Int, thetas; rhos = nothing, relations = nothing, verbose::Bool = false)
-  rhos === nothing && relations === nothing && (rhos = _fay_rhos(g))
   odd_indices = char_to_index.(collect.(odd_theta_characteristics(g)))
-  n_odd = length(odd_indices)
+  structure, stored_relations = _fay_structure(g, thetas, odd_indices; rhos = rhos, relations = relations)
+  verbose && println("structure: $(length(structure)) relations")
+  rows = _sparse_fay_rows(structure, thetas, odd_indices)
+  verbose && println("sparse rows: $(length(rows)), $(sum(r -> length(r[1]), rows)) entries")
+  # stored relations (find_fay_relations): the first n_odd - g are a basis
+  stored = stored_relations && length(rows) == length(structure)
+  return _sparse_kernel(rows, length(odd_indices), g; verbose = verbose, basis_rows = stored)
+end
+
+# The Fay relations used by odd_theta_gradient_kernel (see there for the
+# order of preference) and whether they are stored ones
+function _fay_structure(g::Int, thetas, odd_indices::Vector{Int}; rhos = nothing, relations = nothing)
+  rhos === nothing && relations === nothing && (rhos = _fay_rhos(g))
   if relations === nothing && rhos === nothing
     file = _default_fay_data_file(g)
     if isfile(file)
@@ -410,20 +421,74 @@ function odd_theta_gradient_kernel(g::Int, thetas; rhos = nothing, relations = n
       relations = find_fay_relations(g, thetas)
     end
   end
-  if relations !== nothing
-    relations isa AbstractString && (relations = load_fay_relations(relations))
-    setup = _fay_setup(g)
-    structure = [_fay_relation_structure(g, w, sigma, setup) for (w, sigma) in relations]
-  else
-    structure = _selected_fay_structure(g, thetas, rhos, odd_indices)
-  end
-  verbose && println("structure: $(length(structure)) relations")
-  rows = _sparse_fay_rows(structure, thetas, odd_indices)
-  verbose && println("sparse rows: $(length(rows)), $(sum(r -> length(r[1]), rows)) entries")
-  # stored relations (find_fay_relations): the first n_odd - g are a basis
-  stored = relations !== nothing && length(rows) == length(structure)
-  return _sparse_kernel(rows, n_odd, g; verbose = verbose, basis_rows = stored)
+  relations === nothing && return _selected_fay_structure(g, thetas, rhos, odd_indices), false
+  relations isa AbstractString && (relations = load_fay_relations(relations))
+  setup = _fay_setup(g)
+  return [_fay_relation_structure(g, w, sigma, setup) for (w, sigma) in relations], true
 end
+
+# The smallest `count` singular values (relative to the largest, increasing)
+# of the Float64 matrix of the Fay relations, rows and columns scaled by
+# powers of 2: g at rounding level and a gap if the kernel has dimension g.
+# A diagnostic (an SVD: only for moderate n).
+function fay_singular_values64(g::Int, thetas; rhos = nothing, relations = nothing, count::Int = g + 6)
+  odd_indices = char_to_index.(collect.(odd_theta_characteristics(g)))
+  structure, _ = _fay_structure(g, thetas, odd_indices; rhos = rhos, relations = relations)
+  rows = _sparse_fay_rows(structure, thetas, odd_indices)
+  A = zeros(ComplexF64, length(rows), length(odd_indices))
+  for (i, (cols, vals)) in enumerate(rows), (j, v) in zip(cols, vals)
+    A[i, j] = RSR._c64(v)
+  end
+  for _ in 1:2
+    for i in axes(A, 1)
+      e = maximum(abs, view(A, i, :)); e > 0 && (A[i, :] ./= exp2(round(log2(e))))
+    end
+    for j in axes(A, 2)
+      e = maximum(abs, view(A, :, j)); e > 0 && (A[:, j] ./= exp2(round(log2(e))))
+    end
+  end
+  sv = RSR.LinearAlgebra.svdvals(A)
+  return reverse(sv[end - min(count, length(sv)) + 1:end]) ./ sv[1]
+end
+
+# log2 of the singular values of M relative to the largest (decreasing), at
+# the full precision: one-sided (Hestenes) Jacobi on the midpoints at
+# precision + 64 bits, which also gets the small singular values with
+# relative accuracy (no Gram matrix). -Inf for exactly zero ones. For the
+# small matrices of the quadric step (columns: the monomials of degree 2).
+function singular_values_log2(M::AcbMatrix; sweeps::Int = 40)
+  CC = AcbField(precision(base_ring(M)) + 64)
+  RR = ArbField(precision(CC))
+  m, n = nrows(M), ncols(M)
+  mid(z) = RSR._acb_mid(z)
+  cols = [[mid(CC(M[i, j])) for i in 1:m] for j in 1:n]
+  inner(x, y) = sum(conj(x[i]) * y[i] for i in 1:m)          # x^H y
+  tol = RR(2)^(-precision(CC) + 16)
+  for _ in 1:sweeps
+    rotated = false
+    for j in 1:n - 1, k in j + 1:n
+      x, y = cols[j], cols[k]
+      alpha, beta, gamma = real(inner(x, x)), real(inner(y, y)), inner(x, y)
+      ag = abs(gamma)
+      (iszero(ag) || ag <= tol * sqrt(alpha * beta)) && continue
+      rotated = true
+      e = gamma / ag                       # x^H (conj(e) y) = |gamma|
+      ytil = [mid(conj(e) * v) for v in y]
+      zeta = (beta - alpha) / (2 * ag)
+      sz = RSR._arb_mid_f64(zeta) >= 0 ? 1 : -1
+      t = sz / (abs(zeta) + sqrt(1 + zeta^2))
+      c = 1 / sqrt(1 + t^2)
+      s = c * t
+      cols[j] = [mid(c * xi - s * yi) for (xi, yi) in zip(x, ytil)]
+      cols[k] = [mid(s * xi + c * yi) for (xi, yi) in zip(x, ytil)]
+    end
+    rotated || break
+  end
+  log2_norm(x) = (nrm = sqrt(real(inner(x, x))); iszero(nrm) ? -Inf : Float64(log(nrm) / log(RR(2))))
+  values = sort([log2_norm(x) for x in cols]; rev = true)
+  return values .- values[1]
+end
+
 
 @doc raw"""
     find_fay_relations(g, thetas; extra = 2g, chunk = 256, tolerance = 1e-6, verbose = false)
@@ -539,7 +604,8 @@ end
 # The quadrics from the gradients (rows of K) and those of the Prym (rows of
 # K_prym): relations c between the squares m_d^2 give sum_d c_d l l'. The
 # symmetric matrices are stored by their entries (i, j), i >= j.
-function _quadrics_from_gradients(g::Int, K::AcbMatrix, K_prym::AcbMatrix)
+function _quadrics_from_gradients(g::Int, K::AcbMatrix, K_prym::AcbMatrix; strict::Bool = true,
+                                  diagnostics::Bool = false)
   CC = base_ring(K)
   prec = precision(CC)
   lower(n) = [(i, j) for j in 1:n for i in j:n]
@@ -558,17 +624,35 @@ function _quadrics_from_gradients(g::Int, K::AcbMatrix, K_prym::AcbMatrix)
   # the squares span all quadrics in g - 1 variables
   O = RSR.numerical_kernel(transpose(squares); nullity = n - length(lower(g - 1)))[1]
   q_relations = RSR._log2_relative_residual(transpose(squares), O)
-  @req q_relations < -prec / 4 "The squares of the Prym gradients do not span the quadrics (log2 residual $q_relations)."
+  @req !strict || q_relations < -prec / 4 "The squares of the Prym gradients do not span the quadrics (log2 residual $q_relations)."
   TT = transpose(O) * products
   e = div((g - 2) * (g - 3), 2)
+  # the singular values of TT (rows: the relations, columns: the monomials;
+  # the quadrics are its row space, of dimension e for a generic curve):
+  # relative, decreasing, at Float64 (a diagnostic)
+  rows_scaled = Matrix{ComplexF64}(undef, nrows(TT), ncols(TT))
+  for i in 1:nrows(TT)
+    row = [RSR._c64(TT[i, j]) for j in 1:ncols(TT)]
+    m = maximum(abs, row)
+    rows_scaled[i, :] = m > 0 ? row ./ m : row
+  end
+  singular_values = RSR.LinearAlgebra.svdvals(rows_scaled)
+  singular_values ./= singular_values[1]
   data = RSR._numerical_kernel_data(TT; nullity = length(lower(g)) - e)
   q_quadrics = RSR._log2_relative_residual(TT, data.kernel)
-  @req q_quadrics < -prec / 4 "The relations do not give $e quadrics (log2 residual $q_quadrics); wrong signs of the Prym theta constants, or a non-generic curve?"
+  @req !strict || q_quadrics < -prec / 4 "The relations do not give $e quadrics (log2 residual $q_quadrics); wrong signs of the Prym theta constants, or a non-generic curve?"
   R, x = polynomial_ring(CC, ["x$i" for i in 1:g]; cached = false)
   half = inv(CC(2))
   quadrics = [sum((a == b ? half : one(CC)) * TT[r, k] * x[a] * x[b] for (k, (a, b)) in enumerate(lower(g)))
               for r in data.pivot_rows]
-  return quadrics, (relations = q_relations, quadrics = q_quadrics)
+  info = (relations = q_relations, quadrics = q_quadrics, quadric_singular_values = singular_values)
+  diagnostics || return quadrics, info
+  # at full precision: the squares (columns: the quadratic monomials in g - 1
+  # variables; all nonzero if they span the quadrics) and the relation matrix
+  # (columns: the quadratic monomials in g; (g-2)(g-3)/2 nonzero for a
+  # generic Jacobian)
+  return quadrics, merge(info, (squares_singular_values_log2 = singular_values_log2(squares),
+                                quadric_singular_values_log2 = singular_values_log2(TT)))
 end
 
 # B with K = G B, G the gradients of the odd theta functions at 0 (rows), and
@@ -801,6 +885,244 @@ function _theta_constants_duplication_or_flint(tau::AcbMatrix)
   return Hecke.thetas([zero(CC) for _ in 1:nrows(tau)], tau)
 end
 
+# The theta constants of the (Siegel reduced) tau by the theta_method of
+# reconstruct_quadrics_data
+function _theta_constants_by_method(tau_red::AcbMatrix, theta_method::Symbol; rhos = nothing,
+                                    curve_sign_data = nothing, certified_fixed_signs::Bool = true)
+  g = nrows(tau_red)
+  CC = base_ring(tau_red)
+  @req theta_method in (:flint, :single, :duplication, :riemann) "theta_method must be :flint, :single, :duplication or :riemann."
+  @req theta_method !== :riemann || curve_sign_data !== nothing "theta_method = :riemann needs curve_sign_data (the sign data of genus g)."
+  theta_method === :flint && return Hecke.thetas([zero(CC) for _ in 1:g], tau_red)
+  theta_method === :single && return RSR.theta_constants_single(tau_red, used_theta_characteristics(g; rhos = rhos))
+  theta_method === :duplication && return _theta_constants_duplication_or_flint(tau_red)
+  return theta_constants_riemann_signs(tau_red; sign_data = curve_sign_data,
+                                       certified_fixed_signs = certified_fixed_signs)[1]
+end
+
+_loaded_sign_data(data, h::Int) = data === nothing ? load_sign_data(_default_sign_data_file(h)) :
+                                  data isa AbstractString ? load_sign_data(data) : data
+
+@doc raw"""
+    reconstruct_quadrics_from_thetas(g, thetas; sign_data = nothing, rhos = nothing, prym_rhos = nothing,
+                                     fay_relations = nothing, prym_fay_relations = nothing,
+                                     sign_fallback = true, strict = true, verbose = false) -> NamedTuple
+
+The quadrics of reconstruct_quadrics_data from the even theta constants
+`thetas` of genus g alone (a dictionary characteristic => value, with
+correct signs, e.g. from theta_constants_riemann_signs; the odd ones 0): the
+theta constants of the Prym (Schottky-Jung, signs by Riemann's relations with
+`sign_data` of genus g - 1), the kernels of Fay's relations for both (the
+gradients up to a common linear map: `gradients`, rows the odd
+characteristics) and the quadrics from the relations between the squares of
+the Prym gradients, in the coordinates of `gradients`. The theta constants
+need not come from a Jacobian: with `strict = false` nothing is required of
+the residuals, and `info` reports them (about -precision if the relations
+hold) and the singular values of the relation matrix (`quadric_singular_values`,
+relative, decreasing: for a generic Jacobian (g-2)(g-3)/2 of them are not
+small, the others at the level of the precision). With `diagnostics`
+also: `squares_singular_values_log2` and `quadric_singular_values_log2` (log2
+of all singular values of the squares of the Prym gradients and of the
+relation matrix, relative, at the full precision: singular_values_log2) and
+`fay_singular_values`, `prym_fay_singular_values` (the smallest singular
+values of the Float64 Fay matrices: g resp. g - 1 at rounding level, then a
+gap).
+"""
+function reconstruct_quadrics_from_thetas(g::Int, thetas; sign_data = nothing, rhos = nothing,
+                                          prym_rhos = nothing, fay_relations = nothing,
+                                          prym_fay_relations = nothing, sign_fallback::Bool = true,
+                                          strict::Bool = true, diagnostics::Bool = false, verbose::Bool = false)
+  @req g >= 5 "Only for g >= 5."
+  times = Dict{Symbol, Float64}()
+  stage(name) = (t = time(); () -> (times[name] = time() - t;
+                                    verbose && println(rpad(string(name), 24), round(times[name], digits = 2), " s")))
+  pairs_prym = _loaded_sign_data(sign_data, g - 1)
+  done = stage(:prym_signs)
+  thetas_prym = prym_thetas(g, thetas)
+  _, sufficient = correct_signs_with_data!(thetas_prym, g - 1, pairs_prym; fallback = sign_fallback)
+  done()
+  done = stage(:gradient_kernel)
+  K, q_K = odd_theta_gradient_kernel(g, thetas; rhos = rhos, relations = fay_relations, verbose = verbose)
+  done()
+  done = stage(:prym_gradient_kernel)
+  K_prym, q_K_prym = odd_theta_gradient_kernel(g - 1, thetas_prym; rhos = prym_rhos, relations = prym_fay_relations)
+  done()
+  done = stage(:quadrics)
+  quadrics, q = _quadrics_from_gradients(g, K, K_prym; strict = strict, diagnostics = diagnostics)
+  done()
+  info = merge((gradients = q_K, prym_gradients = q_K_prym, sign_data_sufficed = sufficient), q)
+  if diagnostics
+    info = merge(info, (fay_singular_values = fay_singular_values64(g, thetas; rhos = rhos, relations = fay_relations),
+                        prym_fay_singular_values = fay_singular_values64(g - 1, thetas_prym; rhos = prym_rhos,
+                                                                         relations = prym_fay_relations)))
+  end
+  info = merge(info, (times = (; times...),))
+  return (quadrics = quadrics, gradients = K, prym_gradients = K_prym, prym_thetas = thetas_prym, info = info)
+end
+
+# The theta constants of the Prym (Schottky-Jung for eta = (0..0; 1 0..0)) of
+# the theta constants of genus G, signs by Riemann's relations (sign data of
+# genus G - 1); and whether the stored pairs sufficed
+function _prym_theta_constants(G::Int, thetas, prym_sign_data; fallback::Bool = true)
+  thetas_P = prym_thetas(G, thetas)
+  _, sufficient = correct_signs_with_data!(thetas_P, G - 1, _loaded_sign_data(prym_sign_data, G - 1);
+                                           fallback = fallback)
+  return thetas_P, sufficient
+end
+
+@doc raw"""
+    classify_jacobian(g, thetas; sign_data = nothing, fay_relations = nothing, prym_fay_relations = nothing,
+                      rhos = nothing, prym_rhos = nothing, gap_bits = nothing,
+                      allow_vanishing = false) -> NamedTuple
+
+Whether the theta constants `thetas` (genus g >= 5, with signs) behave like
+those of a generic Jacobian under the reconstruction, as a verdict that is
+never an error: `verdict` is :jacobian, :not_jacobian or :inconclusive, `stage`
+the step that decided, `evidence` the numbers. The steps:
+
+ 0. `:precision`: the even theta constants that do not vanish must be known
+    to at least half the working precision (relative radii), else
+    :inconclusive; vanishing ones (`:theta_constants`) are :inconclusive too,
+    unless `allow_vanishing` (then the steps below are tried anyway, e.g.
+    for hyperelliptic curves or products of Jacobians, also when the
+    Schottky-Jung step fails: with vanishing theta constants Riemann's
+    relations need not determine all the signs).
+ 1. `:schottky_jung`: the theta constants of the Prym for eta = (0..0; 1 0..0)
+    by Schottky-Jung must satisfy Riemann's relations: the rank reached by
+    the stored pairs (`sign_data`, genus g - 1) against the number of signs.
+    For a Jacobian all of them (the random search completes a rank that is
+    at least 90%); for a generic principally polarized abelian variety
+    none. Below 90%: :not_jacobian.
+ 2. `:gradient_kernel`, `:prym_gradient_kernel`: the Fay kernels (dimension
+    g resp. g - 1, residuals below -gap_bits). A failure for g itself (Fay's
+    relations hold for every tau) is :inconclusive, for the Prym (its theta
+    constants are not those of an abelian variety) :not_jacobian.
+ 3. `:squares`: the squares of the Prym gradients must span the quadrics in
+    g - 1 variables (all singular values above -gap_bits): else :not_jacobian.
+ 4. `:quadrics`: the number k of quadrics, the singular values of the relation
+    matrix above 2^(-precision/2), with a gap of at least gap_bits to the
+    next one (else :inconclusive): k = (g-2)(g-3)/2 is :jacobian, any other k
+    :not_jacobian (5 for the intermediate Jacobian of a cubic threefold in
+    genus 5).
+
+`gap_bits`: by default a quarter of the precision. Returns also the
+quadrics (in the coordinates of the gradient kernel) when the verdict is
+:jacobian.
+"""
+function classify_jacobian(g::Int, thetas; sign_data = nothing, fay_relations = nothing,
+                           prym_fay_relations = nothing, rhos = nothing, prym_rhos = nothing,
+                           gap_bits = nothing, allow_vanishing::Bool = false)
+  CC = parent(first(values(thetas)))
+  prec = precision(CC)
+  gap_bits === nothing && (gap_bits = div(prec, 4))
+  expected = div((g - 2) * (g - 3), 2)
+  evidence = Dict{Symbol, Any}()
+  result(v, stage; quadrics = nothing) = (verdict = v, stage = stage, expected = expected,
+                                          quadrics = quadrics, evidence = (; evidence...))
+  # 0. the theta constants themselves: enough precision (e.g. a period
+  # matrix with large radii; of the ones that do not vanish), none vanishing
+  # (unless allow_vanishing: e.g. hyperelliptic curves, products)
+  vanishing = Set(RSR._vanishing_even_theta_constants(thetas, prec))
+  evidence[:vanishing_theta_constants] = length(vanishing)
+  worst = maximum(RSR._log2_relative_radius(v) for (k, v) in thetas if RSR._is_even(k) && !(k in vanishing))
+  evidence[:theta_precision_bits] = -worst
+  -worst < prec / 2 && return result(:inconclusive, :precision)
+  isempty(vanishing) || allow_vanishing || return result(:inconclusive, :theta_constants)
+  # 1. Schottky-Jung: Riemann's relations for the Prym theta constants
+  pairs_prym = _loaded_sign_data(sign_data, g - 1)
+  thetas_prym = prym_thetas(g, thetas)
+  coverage = sign_data_coverage(g - 1, thetas_prym, pairs_prym)
+  evidence[:schottky_jung_rank] = coverage.rank
+  evidence[:schottky_jung_needed] = coverage.needed
+  # (with allow_vanishing the steps below are tried anyway: with vanishing
+  # theta constants the relations may not determine all signs)
+  coverage.rank < 0.9 * coverage.needed && !allow_vanishing && return result(:not_jacobian, :schottky_jung)
+  try
+    correct_signs_with_data!(thetas_prym, g - 1, pairs_prym; fallback = coverage.rank < coverage.needed)
+  catch err
+    evidence[:schottky_jung_error] = sprint(showerror, err)
+    allow_vanishing || return result(:not_jacobian, :schottky_jung)
+  end
+  # 2. the Fay kernels
+  K, q_K = try
+    odd_theta_gradient_kernel(g, thetas; rhos = rhos, relations = fay_relations)
+  catch err
+    evidence[:gradient_kernel_error] = sprint(showerror, err)
+    return result(:inconclusive, :gradient_kernel)
+  end
+  evidence[:gradient_residual] = q_K
+  q_K > -gap_bits && return result(:inconclusive, :gradient_kernel)
+  K_prym, q_Kp = try
+    odd_theta_gradient_kernel(g - 1, thetas_prym; rhos = prym_rhos, relations = prym_fay_relations)
+  catch err
+    evidence[:prym_gradient_kernel_error] = sprint(showerror, err)
+    return result(:not_jacobian, :prym_gradient_kernel)
+  end
+  evidence[:prym_gradient_residual] = q_Kp
+  q_Kp > -gap_bits && return result(:not_jacobian, :prym_gradient_kernel)
+  # 3., 4. the squares and the quadrics
+  quadrics, q = _quadrics_from_gradients(g, K, K_prym; strict = false, diagnostics = true)
+  squares_sv, quadric_sv = q.squares_singular_values_log2, q.quadric_singular_values_log2
+  evidence[:squares_singular_values_log2] = squares_sv
+  evidence[:quadric_singular_values_log2] = quadric_sv
+  minimum(squares_sv) < -gap_bits && return result(:not_jacobian, :squares)
+  k = count(>(-prec / 2), quadric_sv)
+  gap = k == 0 ? Inf : k == length(quadric_sv) ? Inf : quadric_sv[k] - quadric_sv[k + 1]
+  smallest_kept = k == 0 ? 0.0 : quadric_sv[k]
+  evidence[:quadric_count] = k
+  evidence[:quadric_gap_bits] = gap
+  (gap < gap_bits || smallest_kept < -gap_bits) && return result(:inconclusive, :quadrics)
+  k == expected && return result(:jacobian, :quadrics; quadrics = quadrics)
+  return result(:not_jacobian, :quadrics)
+end
+
+@doc raw"""
+    prym_quadrics(tau; prym_sign_data = nothing, sign_data = nothing, fay_relations = nothing,
+                  prym_fay_relations = nothing, theta_method = :riemann, curve_sign_data = nothing,
+                  certified_fixed_signs = true, strict = false, verbose = false) -> NamedTuple
+
+The reconstruction of reconstruct_quadrics_from_thetas applied to the Prym
+variety of the period matrix tau (genus G = nrows(tau) >= 6) for
+eta = (0..0 1 0..0) instead of to tau itself: the theta constants of tau
+(`theta_method`, `curve_sign_data` of genus G, as in reconstruct_quadrics_data),
+those of the Prym P (genus g = G - 1, Schottky-Jung, signs by Riemann's
+relations with `prym_sign_data` of genus g), then the quadrics as if P were
+the Jacobian of a curve of genus g (`sign_data`: genus g - 1, for the Prym of
+P; `fay_relations`: genus g, `prym_fay_relations`: genus g - 1). For G = 6
+(P a generic principally polarized abelian variety of dimension 5, not a
+Jacobian) this shows what the reconstruction does off the Jacobian locus:
+see `info` (residuals and singular values; `diagnostics = true` by default,
+see reconstruct_quadrics_from_thetas); `strict = false` by default, so that
+it returns instead of stopping at the checks. Also returns the theta
+constants of tau (`curve_thetas`, of the Siegel reduced `tau`) and of the
+Prym (`thetas`).
+"""
+function prym_quadrics(tau::AcbMatrix; prym_sign_data = nothing, sign_data = nothing,
+                       fay_relations = nothing, prym_fay_relations = nothing, rhos = nothing,
+                       prym_rhos = nothing, theta_method::Symbol = :riemann, curve_sign_data = nothing,
+                       certified_fixed_signs::Bool = true, strict::Bool = false,
+                       diagnostics::Bool = true, curve_thetas = nothing, verbose::Bool = false)
+  G = nrows(tau)
+  @req ncols(tau) == G && G >= 6 "tau must be a G x G matrix with G >= 6 (a Prym of dimension >= 5)."
+  g = G - 1
+  _, tau_red = Hecke.siegel_reduction(tau)
+  t = time()
+  thetas = curve_thetas !== nothing ? curve_thetas :
+           _theta_constants_by_method(tau_red, theta_method; curve_sign_data = curve_sign_data,
+                                      certified_fixed_signs = certified_fixed_signs)
+  verbose && println(rpad("theta_constants", 24), round(time() - t, digits = 2), " s")
+  thetas_P = prym_thetas(G, thetas)
+  _, sufficient = correct_signs_with_data!(thetas_P, g, _loaded_sign_data(prym_sign_data, g))
+  vanishing = RSR._vanishing_even_theta_constants(thetas_P, precision(base_ring(tau)))
+  @req isempty(vanishing) "$(length(vanishing)) even theta constants of the Prym vanish."
+  result = reconstruct_quadrics_from_thetas(g, thetas_P; sign_data = sign_data, rhos = rhos,
+                                            prym_rhos = prym_rhos, fay_relations = fay_relations,
+                                            prym_fay_relations = prym_fay_relations, strict = strict,
+                                            diagnostics = diagnostics, verbose = verbose)
+  return merge(result, (thetas = thetas_P, curve_thetas = thetas, tau = tau_red,
+                        info = merge(result.info, (prym_sign_data_sufficed = sufficient,))))
+end
+
 @doc raw"""
     reconstruct_quadrics_data(tau; sign_data = nothing, rhos = nothing, prym_rhos = nothing,
                               sign_fallback = true, coordinates = false, theta_method = :flint, curve_sign_data = nothing) -> NamedTuple
@@ -844,35 +1166,24 @@ function reconstruct_quadrics_data(tau::AcbMatrix; sign_data = nothing, rhos = n
   @req theta_method in (:flint, :single, :duplication, :riemann) "theta_method must be :flint, :single, :duplication or :riemann."
   @req theta_method !== :riemann || curve_sign_data !== nothing "theta_method = :riemann needs curve_sign_data (the sign data of genus g)."
   done = stage(:theta_constants)
-  thetas = theta_method === :flint ? Hecke.thetas([zero(CC) for _ in 1:g], tau_red) :
-           theta_method === :single ? RSR.theta_constants_single(tau_red, used_theta_characteristics(g; rhos = rhos)) :
-           theta_method === :duplication ? _theta_constants_duplication_or_flint(tau_red) :
-           theta_constants_riemann_signs(tau_red; sign_data = curve_sign_data,
-                                         certified_fixed_signs = certified_fixed_signs)[1]
+  thetas = _theta_constants_by_method(tau_red, theta_method; rhos = rhos, curve_sign_data = curve_sign_data,
+                                      certified_fixed_signs = certified_fixed_signs)
   done()
   vanishing = RSR._vanishing_even_theta_constants(thetas, prec)
   @req isempty(vanishing) "$(length(vanishing)) even theta constants vanish; only generic curves are supported."
-  pairs = sign_data === nothing ? load_sign_data(_default_sign_data_file(g - 1)) :
-          sign_data isa AbstractString ? load_sign_data(sign_data) : sign_data
-  done = stage(:prym_signs)
-  thetas_prym = prym_thetas(g, thetas)
-  _, sufficient = correct_signs_with_data!(thetas_prym, g - 1, pairs; fallback = sign_fallback)
-  done()
-  done = stage(:gradient_kernel)
-  K, q_K = odd_theta_gradient_kernel(g, thetas; rhos = rhos, relations = fay_relations, verbose = verbose)
-  done()
-  done = stage(:prym_gradient_kernel)
-  K_prym, q_K_prym = odd_theta_gradient_kernel(g - 1, thetas_prym; rhos = prym_rhos, relations = prym_fay_relations)
-  done()
-  done = stage(:quadrics)
-  quadrics, q = _quadrics_from_gradients(g, K, K_prym)
-  done()
+  result = reconstruct_quadrics_from_thetas(g, thetas; sign_data = sign_data, rhos = rhos,
+                                            prym_rhos = prym_rhos, fay_relations = fay_relations,
+                                            prym_fay_relations = prym_fay_relations,
+                                            sign_fallback = sign_fallback, verbose = verbose)
+  # (not pairs(...): a global `pairs` in Main, e.g. sign data, would shadow it)
+  for (k, v) in zip(keys(result.info.times), values(result.info.times))
+    times[k] = v
+  end
+  quadrics, K = result.quadrics, result.gradients
   done = stage(:gradient_coordinates)
   B, q_B = coordinates ? _gradient_coordinates(tau_red, K) : (nothing, NaN)
   done()
-  info = (gradients = q_K, prym_gradients = q_K_prym, relations = q.relations,
-          quadrics = q.quadrics, coordinates = q_B, sign_data_sufficed = sufficient,
-          times = (; times...))
+  info = merge(result.info, (coordinates = q_B, times = (; times...)))
   return (quadrics = quadrics, tau = tau_red, transform = T, coordinates = B, info = info)
 end
 

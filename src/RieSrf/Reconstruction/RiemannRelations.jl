@@ -613,7 +613,10 @@ check_relation_terms(g::Int, pairs) =
 
 # The numerical part: the integral relation between the values of the terms
 # (LLL); (false, ...) unless it has more than two terms and no term has a
-# repeated characteristic.
+# repeated characteristic. Two terms only when the other terms vanish (theta
+# constants that vanish, e.g. of hyperelliptic curves or products: then the
+# relation of Riemann reduces to these two terms; otherwise a relation with
+# two terms is spurious).
 function _relation_from_terms(thetas, data)
   all(allunique, data.term_tup) || return false, [(Vector{Int64}[], ZZ(0))]
   CC = parent(first(values(thetas)))
@@ -624,7 +627,8 @@ function _relation_from_terms(thetas, data)
   # margin; the relation is then checked at full precision (full LLL if not)
   sol = _small_relation(term_values)
   result = filter(x -> x[2] != 0, collect(zip(data.term_tup, sol)))
-  length(result) > 2 || return false, [(Vector{Int64}[], ZZ(0))]
+  nonvanishing = count(v -> !contains_zero(v), term_values)
+  length(result) > 2 || (length(result) == 2 && nonvanishing == 2) || return false, [(Vector{Int64}[], ZZ(0))]
   return true, sort!(result)
 end
 
