@@ -16,7 +16,7 @@
 #
 ################################################################################
 
-_abs64(z::AcbFieldElem) = abs(_c64(z))
+_abs64(z::AcbFieldElem) = abs(RSR._c64(z))
 _safe_log2(x::Float64) = x > 0 ? log2(x) : -Inf
 
 # radius of a ball (upper bound in Float64)
@@ -25,8 +25,22 @@ _radius64(z::AcbFieldElem) = Float64(Hecke.radius(real(z))) + Float64(Hecke.radi
 # log2 of the largest radius relative to the largest midpoint: for vectors,
 # matrices and polynomials the maximum over the entries of max radius / max
 # |entry| (vectors of vectors: per vector)
-_log2_relative_radius(z::AcbFieldElem) = _safe_log2(_radius64(z) / max(_abs64(z), 1e-300))
-_log2_relative_radius(v::Vector{AcbFieldElem}) = _safe_log2(maximum(_radius64, v) / max(maximum(_abs64, v), 1e-300))
+# (in log2, from the exponents: radii below 2^-1074, e.g. a period matrix at
+# more than 1000 bits, underflow in Float64 and would look exact)
+function _log2_mag(x::ArbFieldElem)
+  iszero(x) && return -Inf
+  isfinite(x) || return Inf
+  return Float64(log(ArbField(64)(x))) / log(2.0)
+end
+_log2_radius(z::AcbFieldElem) = max(_log2_mag(Hecke.radius(real(z))), _log2_mag(Hecke.radius(imag(z)))) + 0.5
+_log2_abs(z::AcbFieldElem) = _log2_mag(abs(Hecke.midpoint(real(z))) + abs(Hecke.midpoint(imag(z))))
+function _log2_ratio(radius_log2::Float64, abs_log2::Float64)
+  radius_log2 == -Inf && return -Inf
+  abs_log2 == -Inf && return Inf
+  return radius_log2 - abs_log2
+end
+_log2_relative_radius(z::AcbFieldElem) = _log2_ratio(_log2_radius(z), _log2_abs(z))
+_log2_relative_radius(v::Vector{AcbFieldElem}) = _log2_ratio(maximum(_log2_radius, v), maximum(_log2_abs, v))
 _log2_relative_radius(v::Vector{Vector{AcbFieldElem}}) = maximum(_log2_relative_radius, v)
 _log2_relative_radius(v::Vector{<:MPolyRingElem}) = maximum(_log2_relative_radius, v)
 _log2_relative_radius(M::AcbMatrix) = _log2_relative_radius([M[i, j] for i in 1:nrows(M) for j in 1:ncols(M)])
@@ -147,7 +161,7 @@ function _sqrt_homogeneous(F::MPolyRingElem)
   d = div(total_degree(F), 2)
   pure(i, e) = [j == i ? e : 0 for j in 1:n]
   i0 = argmax([_abs64(get(Fd, pure(i, 2*d), zero(CC))) for i in 1:n])
-  r0 = _rotated_power(Fd[pure(i0, 2*d)], 1//2)
+  r0 = RSR._rotated_power(Fd[pure(i0, 2*d)], 1//2)
   H = Dict{Vector{Int}, AcbFieldElem}(pure(i0, d) => r0)
   others = [j for j in 1:n if j != i0]
   for i in 1:d
