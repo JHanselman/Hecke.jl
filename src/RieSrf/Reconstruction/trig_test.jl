@@ -1,22 +1,19 @@
+using Hecke.RiemannSurfaces
 
-function _form_from_entries(R, c)
-  x = gens(R)
-  half = inv(base_ring(R)(2))
-  p = zero(R)
-  for (k, (i, j)) in enumerate(_lower(length(x)))
-    p += (i == j ? c[k] * half : c[k]) * x[i] * x[j]
-  end
-  return p
-end
+include("ReconstructCurveAuxiliary.jl") 
+include("RiemannRelations.jl") 
+include("SignCorrectionFromMatrices.jl") 
+include("ReconstructGenusG.jl")
+include("ReconstructGenusGTests.jl")
+integral_left_kernel = Hecke.RiemannSurfaces.integral_left_kernel
+Hecke.RiemannSurfaces._elimination_generators(G::Vector{QQMPolyRingElem}, k::Int) = gens(eliminate(ideal(G), gens(parent(G[1]))[1:k]))
 
-homogeneous_monomial_exponents(n, d) = n == 1 ? [[d]] : [[k; e] for k in d:-1:0 for e in _exps(n - 1, d - k)]
-_coeffs(p, es) = [coeff(p, e) for e in es]
-slot = Dict((i, j) => k for (k, (i, j)) in enumerate(lower(g-1)))
-half = inv(CC(2))
 
-#Reconstruction as usual
 Qxy, (x, y) = polynomial_ring(QQ, [:x, :y])
+#Trig curve
 f =  2*x^5*y^3 + 5*x^4*y^3 - 9*x^4*y^2 + 3*x^3*y - 4*x^2*y^2 - 3*x*y^3 + 1
+
+#Generic curve
 #f = 167706*x^6 + 149072*x^5*y - 745360*x^5 - 335412*x^4*y^2 - 335412*x^4*y + 1097712*x^4 - 315084*x^3*y^3 + 111804*x^3*y^2 - 223608*x^3*y - 894432*x^3 + 367356*x^2*y^4 - 95832*x^2*y^3 - 371228*x^2*y^2 + 505560*x^2*y + 817518*x^2 + 249260*x*y^5 - 236214*x*y^4 - 20148*x*y^3 - 29838*x*y^2 + 271364*x*y - 234424*x - 71700*y^6 - 88544*y^5 + 78800*y^4 + 33368*y^3 + 318716*y^2 - 179816*y - 90824
 
 prec = 500
@@ -35,6 +32,27 @@ K, q_K = odd_theta_gradient_kernel(g, thetas)
 K_prym, q_K_prym = odd_theta_gradient_kernel(g - 1, thetas_prym)
 
 lower(n) = [(i, j) for j in 1:n for i in j:n]
+
+function _form_from_entries(R, c)
+  x = gens(R)
+  half = inv(base_ring(R)(2))
+  p = zero(R)
+  for (k, (i, j)) in enumerate(lower(length(x)))
+    p += (i == j ? c[k] * half : c[k]) * x[i] * x[j]
+  end
+  return p
+end
+
+_exps(n, d) = n == 1 ? [[d]] : [[k; e] for k in d:-1:0 for e in _exps(n - 1, d - k)]
+
+
+homogeneous_monomial_exponents(n, d) = n == 1 ? [[d]] : [[k; e] for k in d:-1:0 for e in _exps(n - 1, d - k)]
+_coeffs(p, es) = [coeff(p, e) for e in es]
+slot = Dict((i, j) => k for (k, (i, j)) in enumerate(lower(g-1)))
+half = inv(CC(2))
+
+
+
 pairs = lift_prym_indices(g)
 n = length(pairs)
 HiHis = zero_matrix(CC, n, length(lower(g)))
@@ -112,7 +130,7 @@ for m in 1:5, (s, e) in enumerate(e3)
 end
 C3, rL, _ = RSR.numerical_kernel(L)
 
-#Dimension bigger than I3S.
+#Dimension bigger than I3S for trigonal curve example.
 dim_I3X = ncols(C3)
 cubic(col) = sum(C3[s, col] * prod(x .^ e3[s]) for s in 1:35)
 
