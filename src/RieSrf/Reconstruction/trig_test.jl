@@ -17,6 +17,7 @@ half = inv(CC(2))
 #Reconstruction as usual
 Qxy, (x, y) = polynomial_ring(QQ, [:x, :y])
 f =  2*x^5*y^3 + 5*x^4*y^3 - 9*x^4*y^2 + 3*x^3*y - 4*x^2*y^2 - 3*x*y^3 + 1
+#f = 167706*x^6 + 149072*x^5*y - 745360*x^5 - 335412*x^4*y^2 - 335412*x^4*y + 1097712*x^4 - 315084*x^3*y^3 + 111804*x^3*y^2 - 223608*x^3*y - 894432*x^3 + 367356*x^2*y^4 - 95832*x^2*y^3 - 371228*x^2*y^2 + 505560*x^2*y + 817518*x^2 + 249260*x*y^5 - 236214*x*y^4 - 20148*x*y^3 - 29838*x*y^2 + 271364*x*y - 234424*x - 71700*y^6 - 88544*y^5 + 78800*y^4 + 33368*y^3 + 318716*y^2 - 179816*y - 90824
 
 prec = 500
 RS = riemann_surface(f, prec; superelliptic = false, model = :original)
@@ -65,7 +66,7 @@ Mu = transpose(HiHis[M_basis, :]) * Alpha
 R, _ = polynomial_ring(CC, 5; cached = false)
 all_quadrics = [_form_from_entries(R, [Mu[s, k] for s in 1:15]) for k in 1:10]
 
-#Matrix consisting of quadrics corresponding to xixj
+#Matrix consisting of quadrics corresponding to xixj on the Prym canonical space.
 M = [i == j ? all_quadrics[slot[(i, i)]] : half * all_quadrics[slot[(max(i, j), min(i, j))]] for i in 1:4, j in 1:4]
 R = parent(M[1, 1])
 x = gens(R)
@@ -80,21 +81,25 @@ scroll4 = [x[a] * x[b] * q for q in quadric_pols for a in 1:5 for b in a:5]
 S4q = matrix(CC, 45, 70, reduce(vcat, [_coeffs(p, e4) for p in scroll4]))
 _, dim_I4S, _ = RSR.numerical_kernel(S4q)
 
-#Quartics coming from minors using all of the quadrics
+#Quartics coming from minors using all of the quadrics. 
+
+# Note that these are a priori non-zero on the curve, but will map to zero by construction if we use
+# Milne's map, which means they vanish on the Prym canonical embedding.
 minors = [M[i, k] * M[j, l] - M[i, l] * M[j, k] for i in 1:4 for j in i+1:4 for k in 1:4 for l in k+1:4]
 allq = [scroll4; minors]
 S4 = matrix(CC, length(allq), 70, reduce(vcat, [_coeffs(p, e4) for p in allq]))
 Z4, dim_I4X, _ = RSR.numerical_kernel(S4)
 
+#The numerical kernel of I4X is bigger than I4S for a trigonal curve. Always the case for trigonal?
 
-#Use the extra quadrics to produce new cubics
+#Use the extra quartics to produce new cubics
 
 #Cubics simply coming from muliplying by a linear factor
 scroll3 = [x[a] * q for q in quadric_pols for a in 1:5]
 S3 = matrix(CC, 15, 35, reduce(vcat, [_coeffs(p, e3) for p in scroll3]))
 Z3, dim_I3S, _ = RSR.numerical_kernel(S3)
 
-# cubic in I_3(X) if and only if x_m * cubic is annihilated by the kernel Z4 of S4 for all m
+# cubic in I_3X if and only if x_m * cubic is annihilated by the kernel Z4 of S4 for all m
 idx4 = Dict(e => k for (k, e) in enumerate(e4))
 nz = ncols(Z4)
 L = zero_matrix(CC, 5 * nz, 35)
@@ -107,10 +112,11 @@ for m in 1:5, (s, e) in enumerate(e3)
 end
 C3, rL, _ = RSR.numerical_kernel(L)
 
+#Dimension bigger than I3S.
 dim_I3X = ncols(C3)
 cubic(col) = sum(C3[s, col] * prod(x .^ e3[s]) for s in 1:35)
 
-#Get new cubics
+#Get cubics from I3X that are not in I3S.
 P = transpose(Z3) * C3
 kdP = RSR._numerical_kernel_data(P)
 new_cubics = [cubic(c) for c in kdP.pivot_columns]
