@@ -670,3 +670,21 @@ mutable struct RiemannSurface
     return RS
   end
 end
+
+################################################################################
+#
+#  Reconstruction: the GF(2) system for the signs of the Prym theta
+#  constants (SignCorrection.jl), kept in echelon form while the equations
+#  are added: row k has its pivot at pivots[k] and zeros at the pivots of the
+#  earlier rows.
+#
+################################################################################
+
+mutable struct _SignSystem
+  cols::Vector{Int}                # theta indices of the non-fixed characteristics
+  position::Dict{Int, Int}         # theta index -> unknown 1..length(cols)
+  rows::Vector{BitVector}          # the equations (coefficients of the flips), echelon form
+  pivots::Vector{Int}              # the pivot of each row
+  rhs::Vector{Bool}                # the right hand sides
+  rank::Int                        # number of rows
+end

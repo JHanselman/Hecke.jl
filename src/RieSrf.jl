@@ -3,8 +3,6 @@ module RiemannSurfaces
 
 using Hecke
 
-# The user-facing functions. (Everything else is internal; the tests and
-# diagnostics access it as Hecke.RiemannSurfaces.name.)
 export riemann_surface, RiemannSurface, genus, precision, embedding,
        big_period_matrix, small_period_matrix, homology_basis,
        discriminant_points, ramification_points, singular_points, infinite_points,
@@ -14,7 +12,10 @@ export riemann_surface, RiemannSurface, genus, precision, embedding,
        tangent_representation, homology_representation,
        geometric_homomorphism_representation, geometric_homomorphism_representation_nf,
        geometric_endomorphism_representation, geometric_endomorphism_representation_nf,
-       approximate_minimal_polynomial, algebraize_element, endomorphism_structure
+       approximate_minimal_polynomial, algebraize_element, endomorphism_structure,
+       integral_left_kernel,
+       reconstruct_curve, reconstruct_quadrics, reconstruct_cubic_threefold,
+       reconstruct_plane_quintic, reconstruct_hyperelliptic_curve, prym_quadrics
 
 
 import Hecke.AbstractAlgebra, Hecke.Nemo
@@ -57,9 +58,16 @@ include("RieSrf/Periods/Superelliptic.jl")
 include("RieSrf/Endomorphisms/HeuristicEndomorphisms.jl")
 include("RieSrf/Endomorphisms/Algebraization.jl")
 include("RieSrf/Endomorphisms/EndomorphismStructure.jl")
-include("RieSrf/Reconstruction/ThetaCharacteristics.jl")
 include("RieSrf/Reconstruction/ReconstructNumerics.jl")
+include("RieSrf/Reconstruction/ThetaCharacteristics.jl")
+include("RieSrf/Reconstruction/RiemannRelations.jl")
+include("RieSrf/Reconstruction/SignCorrection.jl")
+include("RieSrf/Reconstruction/FayRelations.jl")
 include("RieSrf/Reconstruction/ReconstructCurvesG123.jl")
 include("RieSrf/Reconstruction/ReconstructG4Tables.jl")
 include("RieSrf/Reconstruction/ReconstructG4.jl")
+include("RieSrf/Reconstruction/Quadrics.jl")
+include("RieSrf/Reconstruction/Hyperelliptic.jl")
+include("RieSrf/Reconstruction/PlaneQuinticsAndCubicThreefolds.jl")
+include("RieSrf/Reconstruction/CurveReconstruction.jl")
 end
