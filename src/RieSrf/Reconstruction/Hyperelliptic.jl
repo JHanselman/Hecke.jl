@@ -82,12 +82,77 @@ function _hyperelliptic_eta(g::Int, thetas, vanishing)
   error("The vanishing theta constants do not have the configuration of a hyperelliptic curve.")
 end
 
+# Mumford's eta map in the standard symplectic basis (Tata lectures II,
+# IIIa.5): eta_{2i-1} = [e_i; 1 (i - 1 times) 0 ..], eta_{2i} = [e_i; 1 (i times) 0 ..],
+# eta_{2g+1} = [0; 1 .. 1], eta_{2g+2} = 0, and U = {2, 4, .., 2g, 2g + 2}
+# (the eta_i that are odd and infinity). Takase's formula holds for these.
+function _mumford_eta_standard(g::Int)
+  eta = Vector{Int}[]
+  for i in 1:g, k in (i - 1, i)
+    push!(eta, [[j == i ? 1 : 0 for j in 1:g]; [j <= k ? 1 : 0 for j in 1:g]])
+  end
+  push!(eta, [zeros(Int, g); ones(Int, g)])
+  push!(eta, zeros(Int, 2*g))
+  return eta, [collect(2:2:2*g); 2*g + 2]
+end
+
+_symplectic_pairing(x, y, g::Int) = mod(sum(x[i] * y[g + i] + x[g + i] * y[i] for i in 1:g), 2)
+
+# An integral symplectic T, a product of transvections, with T u_k = w_k mod 2
+# (k = 1..2g; the u_k and the w_k have the same pairings): the u_k are moved
+# one after the other by transvections that fix the w_j already reached.
+function _symplectic_lift(us, ws, g::Int)
+  T = Matrix{Int}(LinearAlgebra.I, 2*g, 2*g)
+  pair(x, y) = _symplectic_pairing(x, y, g)
+  vectors = [collect(_char_from_mask(m, g)) for m in 1:4^g - 1]
+  for k in 1:2*g
+    x, w = _f2(T * us[k]), ws[k]
+    x == w && continue
+    if pair(x, w) == 1
+      T = _integral_transvection(_f2(x .+ w), g) * T
+    else
+      # through a y with <x, y> = <y, w> = 1 and <y, w_j> = <w, w_j> (j < k)
+      index = findfirst(v -> pair(x, v) == 1 && pair(v, w) == 1 &&
+                             all(pair(v, ws[j]) == pair(w, ws[j]) for j in 1:k-1), vectors)
+      @req index !== nothing "No symplectic map between the configurations of 2-torsion points."
+      y = vectors[index]
+      T = _integral_transvection(_f2(y .+ w), g) * _integral_transvection(_f2(x .+ y), g) * T
+    end
+  end
+  @req all(_f2(T * us[k]) == ws[k] for k in 1:2*g) "No symplectic map between the configurations of 2-torsion points."
+  return T
+end
+
+# The Rosenhain invariants lambda_3, .., lambda_2g+1 (y^2 = x (x - 1) prod (x - lambda_l))
+# from the theta constants of a hyperelliptic curve. Takase's formula needs
+# Mumford's standard eta map: the eta_i and U found from the vanishing theta
+# constants (_hyperelliptic_eta) are moved there by a symplectic matrix
+# (_symplectic_lift; the points of U to 2, 4, .., 2g), the theta constants
+# with Igusa's formula (_transform_theta_constants).
+function _rosenhain_invariants(g::Int, thetas, vanishing)
+  eta, U = _hyperelliptic_eta(g, thetas, vanishing)
+  standard, U_standard = _mumford_eta_standard(g)
+  in_U = sort(setdiff(U, [2*g + 2]))
+  order = zeros(Int, 2*g + 1)
+  order[2:2:2*g] = in_U
+  order[1:2:2*g + 1] = setdiff(1:2*g + 1, in_U)
+  N = _symplectic_lift([eta[order[k]] for k in 1:2*g], standard[1:2*g], g)
+  # the linear part of the action of M on the characteristics is (M^-1)^T = N
+  J = [zeros(Int, g, g) Matrix{Int}(LinearAlgebra.I, g, g); -Matrix{Int}(LinearAlgebra.I, g, g) zeros(Int, g, g)]
+  M = Matrix(transpose(-J * transpose(N) * J))
+  moved = _transform_theta_constants(thetas, M, g)
+  prec = precision(parent(first(values(thetas))))
+  zero_set = Set(_vanishing_even_theta_constants(moved, prec))
+  expected = Set(Tuple(_f2(sum(standard[i] for i in symdiff(U_standard, S)))) for S in _subsets(2*g + 2, g + 1))
+  @req all(c -> !_is_even(c) || ((c in expected) == !(c in zero_set)), keys(moved)) "The theta constants in Mumford's basis do not have the expected vanishing pattern."
+  thetas_sq = Dict(c => v^2 for (c, v) in moved)
+  return [_takase_quotient(thetas_sq, standard, U_standard, 1, l, 2) for l in 3:2*g+1]
+end
+
 # The Rosenhain form y^2 = x (x - 1) prod (x - lambda_l) over CC and the
 # lambda_l
 function _hyperelliptic_curve_from_thetas(g::Int, thetas, vanishing)
-  eta, U = _hyperelliptic_eta(g, thetas, vanishing)
-  thetas_sq = Dict(c => v^2 for (c, v) in thetas)
-  lambdas = [_takase_quotient(thetas_sq, eta, U, 1, l, 2) for l in 3:2*g+1]
+  lambdas = _rosenhain_invariants(g, thetas, vanishing)
   CC = parent(first(values(thetas)))
   CCx, x = polynomial_ring(CC, :x; cached = false)
   return hyperelliptic_curve(x * (x - 1) * prod(x - l for l in lambdas)), lambdas
@@ -153,7 +218,7 @@ function reconstruct_hyperelliptic_curve(P::AcbMatrix, K = QQ; place = nothing)
   f = prod(x - a for a in points)
   F, _, recognize, _ = _g4_field_data(K, place, CC)
   coefficients_K = [recognize(coeff(f, k)) for k in 0:degree(f)]
-  @req all(!isnothing, coefficients_K) "Could not recognize the coefficients of f in $K (more precision needed?)."
+  @req all(!isnothing, coefficients_K) "Could not recognize the coefficients of f in $K (more precision needed?). f = $(map_coefficients(_acb_mid, f; parent = CCx)); root counts $(counts[1:min(end, 2*g + 4)])"
   Fx, X = polynomial_ring(F, :x; cached = false)
   return hyperelliptic_curve(sum(c * X^(k - 1) for (k, c) in enumerate(coefficients_K)))
 end
