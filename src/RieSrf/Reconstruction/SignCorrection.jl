@@ -1,33 +1,47 @@
 ################################################################################
 #
-#  SignCorrectionFromMatrices.jl : sign correction of theta constants with
-#  precomputed (term, matrix) pairs
+#  SignCorrection.jl : the signs of the Schottky-Jung theta constants
 #
-#  The sign correction of SignCorrection.jl draws random elements T of the
-#  isometry group and keeps the relations relation_with_term(g, thetas, term,
-#  T) that contain the term (a zero-sum tetrad of fixed characteristics). The
-#  relation only depends on the term and on M1 = T * M, M =
-#  map_even_characteristic(Max Noether characteristic, term[1]). The
-#  characteristics in a relation do not depend on the curve, so the pairs
-#  (term, M1) found once (find_sign_data, with the random search) can be
-#  reused (correct_signs_with_data!): only the coefficients of the relations,
-#  which carry the sign information, are computed numerically. If the stored
-#  pairs do not reach full rank (non-generic curve), the random search takes
-#  over.
+#  prym_thetas gives the theta constants of the Prym only up to sign. The
+#  signs are fixed by Riemann's quartic relations (RiemannRelations.jl):
 #
-#  Entry points: find_sign_data, save_sign_data, load_sign_data,
-#  correct_signs_with_data!.
-#  Uses RiemannRelations.jl (relation_with_term, max_noether_characteristics,
-#  bitmask), ReconstructCurveAuxiliary.jl (map_even_characteristic). Saving and
-#  loading need Oscar.
+#   - sign changes that do not change the abelian variety span a space of
+#     dimension g(2g + 1); the characteristics at the pivots of its echelon
+#     form are fixed (find_fixed_even_chars), the other signs are unknowns
+#     over GF(2);
+#   - a relation is given by a term (a zero-sum tetrad of fixed
+#     characteristics) and a symplectic matrix M1; it holds with coefficients
+#     +-1, and each coefficient is a linear equation in the unknowns.
+#
+#  Which pairs (term, M1) give useful relations does not depend on the
+#  (generic) curve, so they are found once by a random search (find_sign_data,
+#  random elements of the orthogonal group; this part needs Oscar, see
+#  Generation/OscarIsometries.jl) and stored (Data/SignDataG*.txt,
+#  save_sign_data). correct_signs_with_data! then only evaluates these
+#  relations.
+#
+#  Entry points: correct_signs_with_data!, load_sign_data, save_sign_data,
+#  find_sign_data, extend_sign_data, sign_data_coverage.
 #
 ################################################################################
 
-# The sign changes of the even theta constants that do not change the curve
-# (a common sign and (-1)^(c^T T c), T upper triangular) span a space of
-# dimension g(2g + 1); the characteristics at the pivots of its echelon form
-# are fixed (their signs can be chosen), the signs of the others are
-# determined by Riemann's relations.
+_default_sign_data_file(g::Int) = joinpath(@__DIR__, "Data", "SignDataG$(g).txt")
+
+# The stored sign data of genus g: `data` itself (loaded pairs), a file, or
+# the default file
+function _loaded_sign_data(data, g::Int)
+  data === nothing && return load_sign_data(_default_sign_data_file(g))
+  data isa AbstractString && return load_sign_data(data)
+  return data
+end
+
+################################################################################
+#
+#  The linear system for the signs
+#
+################################################################################
+
+# The characteristics whose signs can be chosen (fixed) and the others
 function find_fixed_even_chars(g)
   F = GF(2)
   char_vecs = collect.(sort(even_theta_characteristics(g)))
@@ -57,19 +71,6 @@ function find_zero_sum_tetrads(chars::Vector{Vector{Int}})
     push!(tetrads, Tuple(sort([i1, j1, i2, j2])))
   end
   return [(chars[i], chars[j], chars[k], chars[l]) for (i, j, k, l) in tetrads]
-end
-
-# State of the GF(2) system for the sign flips x of the non-fixed thetas,
-# kept in echelon form while the equations are added (one reduction per
-# equation instead of a rank computation): row k has its pivot at pivots[k]
-# and zeros at the pivots of the earlier rows.
-mutable struct _SignSystem
-  cols::Vector{Int}                # theta indices of the non-fixed characteristics
-  position::Dict{Int, Int}         # theta index -> unknown 1..length(cols)
-  rows::Vector{BitVector}          # the equations (coefficients of x), echelon form
-  pivots::Vector{Int}              # the pivot of each row
-  rhs::Vector{Bool}                # the right hand sides
-  rank::Int                        # number of rows
 end
 
 function _SignSystem(g::Int, cols::Vector{Int})
@@ -125,10 +126,8 @@ function _apply_signs!(thetas, S::_SignSystem, non_fixed_thetas)
   return thetas
 end
 
-# The relation for (term, M1) (M1 = T M as returned by relation_with_term),
-# scaled so that the term has coefficient 1; nothing if there is no relation
-# or the term does not occur in it. The characteristics are checked first, so
-# the theta constants and LLL are only used when the term occurs.
+# The relation for (term, M1), scaled so that the term has coefficient 1;
+# nothing if there is no relation or the term does not occur in it.
 _relation_for_pair(g::Int, thetas, term, M1::FqMatrix) = _relation_for_data(thetas, term, _relation_terms_int(g, term, M1))
 
 function _relation_for_data(thetas, term, data)
@@ -154,12 +153,9 @@ function _relation_for_data(thetas, term, data)
 end
 
 # The relations of the pairs, in parallel (threads; the pairs are
-# independent, the thetas are only read). The random matrices are drawn
-# before, on the calling thread (rand on the GAP group is not thread safe),
-# and so are the combinatorial data of the relations (GF(2) matrices: the
-# cached field and the linear algebra over it stay off the threads); the
-# threads only evaluate and run LLL (the fields of lower precision for it
-# are created under a lock, see _small_relation).
+# independent, the thetas are only read). The combinatorial data of the
+# relations (GF(2) matrices) are computed on the calling thread; the threads
+# only evaluate and run LLL.
 function _relations_for_pairs(g::Int, thetas, pairs; parallel::Bool = Threads.nthreads() > 1)
   relations = Vector{Any}(undef, length(pairs))
   if parallel
@@ -175,6 +171,8 @@ function _relations_for_pairs(g::Int, thetas, pairs; parallel::Bool = Threads.nt
   return relations
 end
 
+# The terms, the non-fixed characteristics whose constant does not vanish,
+# and the empty system
 function _sign_setup(g::Int, thetas)
   fixed_thetas, non_fixed_thetas = find_fixed_even_chars(g)
   # identically vanishing thetas (non-generic case) carry no sign: balls
@@ -183,11 +181,28 @@ function _sign_setup(g::Int, thetas)
   # vanishing and a nonvanishing theta constant, tiny balls not containing 0,
   # whose signs Riemann's relations cannot determine)
   CC = parent(first(values(thetas)))
-  largest = maximum(RSR._log2_abs(v) for v in values(thetas))
-  negligible(v) = contains(v, zero(CC)) || RSR._log2_abs(v) < largest - precision(CC) / 2
+  largest = maximum(_log2_abs(v) for v in values(thetas))
+  negligible(v) = contains(v, zero(CC)) || _log2_abs(v) < largest - precision(CC) / 2
   filter!(c -> !negligible(thetas[c...]), non_fixed_thetas)
   terms = find_zero_sum_tetrads(fixed_thetas)
   return terms, non_fixed_thetas, _SignSystem(g, char_to_index.(non_fixed_thetas))
+end
+
+################################################################################
+#
+#  The random search (needs random isometries, see below)
+#
+################################################################################
+
+# A function g -> (a function returning a random element of the orthogonal
+# group O(g, g) over GF(2), the isometries of the quadratic form x'y), or
+# nothing. Hecke has no such groups: Generation/OscarIsometries.jl sets it with
+# Oscar's isometry_group.
+_random_isometry_sampler = nothing
+
+function _set_random_isometry_sampler!(sampler)
+  global _random_isometry_sampler = sampler
+  return nothing
 end
 
 # Random search until full rank; records the (term, M1) pairs that were used.
@@ -197,7 +212,8 @@ function _random_search!(S::_SignSystem, g::Int, thetas, terms, target_rank;
                          pairs = nothing, max_tries::Int = 100000, batch_size::Int = 4,
                          parallel::Bool = Threads.nthreads() > 1, verbose::Bool = false)
   F = GF(2)
-  G = isometry_group(quadratic_form([zero_matrix(F, g, g) identity_matrix(F, g); zero_matrix(F, g, g) zero_matrix(F, g, g)]))
+  @req _random_isometry_sampler !== nothing "The random search for Riemann relations needs random elements of O(g, g) over GF(2), which Hecke does not provide: run `using Oscar` and include Generation/OscarIsometries.jl (next to this file). (Reached because the stored sign data do not determine all signs.)"
+  random_isometry = _random_isometry_sampler(g)
   v1 = F.(ZZ.(max_noether_characteristics(g)[1] * 2))
   to_term = Dict{Any, FqMatrix}()        # map_even_characteristic(v1, term[1]) per term
   tries = 0
@@ -208,7 +224,7 @@ function _random_search!(S::_SignSystem, g::Int, thetas, terms, target_rank;
     for _ in 1:batch_size * Threads.nthreads()
       term = terms[rand(1:length(terms))]
       M = get!(() -> map_even_characteristic(v1, F.(collect(term[1]))), to_term, term[1])
-      push!(batch, (term, matrix(rand(G)) * M))
+      push!(batch, (term, random_isometry() * M))
     end
     tries += length(batch)
     for ((term, M1), rel) in zip(batch, _relations_for_pairs(g, thetas, batch; parallel))
@@ -229,12 +245,9 @@ end
         -> Vector{Tuple{term, FqMatrix}}
 
 Corrects the signs of the even theta constants `thetas` of genus `g` by the
-random search and returns the (term, M1) pairs whose relations were used
-(each contributed at least one equation). Run on a generic curve; the result
-is for `save_sign_data`. With `parallel` the relations are computed on all
-threads (start Julia with `-t n`); `verbose` prints the progress after each
-batch; `max_tries`, `batch_size` (pairs per thread and batch): see
-_random_search!.
+random search and returns the (term, M1) pairs whose relations were used.
+Run it on the theta constants of a generic curve and store the result with
+`save_sign_data`. Needs Oscar: include `Generation/OscarIsometries.jl` first.
 """
 function find_sign_data(g::Int, thetas; kw...)
   terms, non_fixed_thetas, S = _sign_setup(g, thetas)
@@ -245,15 +258,16 @@ function find_sign_data(g::Int, thetas; kw...)
 end
 
 @doc raw"""
-    correct_signs_with_data!(thetas, g, pairs; fallback = true, parallel = Threads.nthreads() > 1) -> thetas, Bool
+    correct_signs_with_data!(thetas, g, pairs; fallback = true, parallel = Threads.nthreads() > 1)
+        -> thetas, Bool
 
 Corrects the signs of the even theta constants `thetas` of genus `g` (e.g.
-the Prym theta constants, g = 4 for a genus 5 curve) with the relations of
-the stored pairs (see `load_sign_data`). Returns the corrected thetas and
-whether the pairs alone sufficed; with `fallback = true` missing equations
-come from the random search, otherwise an error is raised. With `parallel`
-the relations are computed on all threads. The pairs the random search used
-are appended to `new_pairs` (a vector, see extend_sign_data).
+the Prym theta constants, `g = 4` for a genus 5 curve) with the relations of
+the stored `pairs` (see `load_sign_data`). Returns the corrected thetas and
+whether the pairs alone sufficed. If they do not, the missing equations come
+from the random search (with `fallback`; needs Oscar, see find_sign_data),
+otherwise an error is raised. The pairs the random search used are appended
+to `new_pairs` (a vector).
 """
 function correct_signs_with_data!(thetas, g::Int, pairs; fallback::Bool = true,
                                   parallel::Bool = Threads.nthreads() > 1, new_pairs = nothing)
@@ -281,11 +295,9 @@ end
 @doc raw"""
     sign_data_coverage(g, thetas, pairs) -> NamedTuple
 
-The rank that the relations of the stored `pairs` reach for the theta
-constants `thetas` of genus g, the rank needed (the number of non-fixed
-even characteristics whose constant does not vanish) and the non-fixed
-characteristics whose sign the pairs leave free (the free unknowns of the
-echelon form; one of them per missing rank). Does not change `thetas`.
+The rank that the relations of `pairs` reach for the theta constants `thetas`
+of genus g, the rank needed and the non-fixed characteristics whose sign
+the pairs leave free. Does not change `thetas`.
 """
 function sign_data_coverage(g::Int, thetas, pairs)
   _, non_fixed_thetas, S = _sign_setup(g, thetas)
@@ -299,11 +311,9 @@ end
 @doc raw"""
     extend_sign_data(g, thetas, pairs) -> Vector
 
-The stored `pairs` and the pairs that the random search needs on top of
-them to correct the signs of `thetas` (genus g; a copy is corrected). For
-sign data that was made on a curve with a vanishing (or numerically zero)
-theta constant, whose sign the stored relations then never determine; save
-the result with save_sign_data.
+The stored `pairs` and the pairs that the random search needs on top of them
+to correct the signs of `thetas` (genus g; a copy is corrected). Needs Oscar
+(see find_sign_data).
 """
 function extend_sign_data(g::Int, thetas, pairs)
   added = Tuple{Any, FqMatrix}[]
@@ -311,86 +321,51 @@ function extend_sign_data(g::Int, thetas, pairs)
   return [pairs; added]
 end
 
-# Storage: the terms as flat integer vectors (4 characteristics of length 2g)
-# and the matrices as 0/1 integer vectors, so the file does not depend on the
-# GF(2) parent or on the order in which find_zero_sum_tetrads returns terms.
+################################################################################
+#
+#  Storage (plain text, see Data/)
+#
+################################################################################
+
+@doc raw"""
+    save_sign_data(file, pairs)
+
+Writes the (term, matrix) pairs of find_sign_data to `file`, one per line:
+the term (4 characteristics of 2g bits) and the 2g x 2g matrix over GF(2)
+row by row, as strings of bits.
+"""
 function save_sign_data(file::AbstractString, pairs)
-  terms = [reduce(vcat, collect.(term)) for (term, _) in pairs]
-  mats = [[Int(lift(ZZ, M[i, j])) for i in 1:nrows(M) for j in 1:ncols(M)] for (_, M) in pairs]
-  save(file, (terms, mats))
-end
-
-function load_sign_data(file::AbstractString)
-  data = load(file)
-  # the older files (find_correcting_matrices) hold only the matrices, without
-  # the terms they belong to; the relations cannot be recovered from them
-  @req data isa Tuple && length(data) == 2 "$file is not in the format of save_sign_data (terms and matrices); an older file with only the matrices? Regenerate it with find_sign_data and save_sign_data."
-  terms, mats = data
-  F = GF(2)
-  pairs = Tuple{Any, FqMatrix}[]
-  for (t, m) in zip(terms, mats)
-    n = isqrt(length(m))
-    l = div(length(t), 4)
-    term = Tuple(collect(t[(k - 1) * l + 1:k * l]) for k in 1:4)
-    push!(pairs, (term, matrix(F, n, n, F.(m))))
-  end
-  return pairs
-end
-
-# Back substitution with given values of the free unknowns (in the order of
-# the non-pivot unknowns); returns the flips x.
-function _sign_solution(S::_SignSystem, free_values::AbstractVector{Bool})
-  n = length(S.cols)
-  x = falses(n)
-  free = [k for k in 1:n if !(k in S.pivots)]
-  for (k, v) in zip(free, free_values)
-    x[k] = v
-  end
-  for k in S.rank:-1:1
-    value = S.rhs[k]
-    for j in findall(S.rows[k])
-      j == S.pivots[k] || (value ⊻= x[j])
+  open(file, "w") do io
+    g = div(length(first(pairs[1][1])), 2)
+    println(io, "# Sign data of genus $g (load_sign_data): one (term, matrix) pair per line,")
+    println(io, "# the term as 4 characteristics of $(2*g) bits, the matrix ($(2*g) x $(2*g) over GF(2)) row by row.")
+    for (term, M) in pairs
+      bits = join(string.(reduce(vcat, collect.(term))))
+      matrix_bits = join(string(lift(ZZ, M[i, j])) for i in 1:nrows(M) for j in 1:ncols(M))
+      println(io, bits, " ", matrix_bits)
     end
-    x[S.pivots[k]] = value
   end
-  return x
+  return nothing
 end
 
 @doc raw"""
-    sign_completions(thetas, g, pairs; max_tries = 20000, parallel = Threads.nthreads() > 1)
-      -> NamedTuple
+    load_sign_data(file) -> Vector{Tuple{term, FqMatrix}}
 
-For theta constants whose signs Riemann's relations do not determine
-completely (e.g. the Schottky-Jung values of a product or at a hyperelliptic
-curve): the equations of the stored pairs and of a random search (stopped
-after `max_tries` pairs instead of failing), and a function `completion(bits)`
-that returns a copy of `thetas` with the signs solved for the given values
-of the free unknowns (a vector of `free` Bools). Returns (rank, needed, free
-(the number of free unknowns), completion).
+The (term, matrix) pairs written by save_sign_data. The stored data of genus
+4 to 7 are in the folder Data next to this file (_default_sign_data_file).
 """
-function sign_completions(thetas, g::Int, pairs; max_tries::Int = 20000, parallel::Bool = Threads.nthreads() > 1)
-  terms, non_fixed_thetas, S = _sign_setup(g, thetas)
-  target_rank = length(non_fixed_thetas)
-  for rel in _relations_for_pairs(g, thetas, pairs; parallel)
-    rel === nothing || _add_relation!(S, rel)
-    S.rank >= target_rank && break
+function load_sign_data(file::AbstractString)
+  F = GF(2)
+  pairs = Tuple{Any, FqMatrix}[]
+  for line in eachline(file)
+    (isempty(line) || startswith(line, "#")) && continue
+    term_bits, matrix_bits = split(line)
+    t = [parse(Int, c) for c in term_bits]
+    m = [parse(Int, c) for c in matrix_bits]
+    n = isqrt(length(m))
+    l = div(length(t), 4)
+    term = Tuple(t[(k - 1) * l + 1:k * l] for k in 1:4)
+    push!(pairs, (term, matrix(F, n, n, F.(m))))
   end
-  if S.rank < target_rank
-    try
-      _random_search!(S, g, thetas, terms, target_rank; parallel, max_tries = max_tries)
-    catch err
-      err isa ArgumentError || rethrow()
-    end
-  end
-  free = target_rank - S.rank
-  function completion(bits::AbstractVector{Bool})
-    @req length(bits) == free "Expected $free values for the free signs."
-    x = _sign_solution(S, bits)
-    t = copy(thetas)
-    for j in 1:length(S.cols)
-      x[j] && (t[non_fixed_thetas[j]...] = -t[non_fixed_thetas[j]...])
-    end
-    return t
-  end
-  return (rank = S.rank, needed = target_rank, free = free, completion = completion)
+  return pairs
 end

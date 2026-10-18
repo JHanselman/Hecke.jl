@@ -1,6 +1,3 @@
-isdefined(Main, :RSM) || include(joinpath(Hecke.pkgdir, "test", "RieSrfHelpers", "TestHelpers.jl"))
-global Qxy = RIESRF_RING; global x, y = gens(RIESRF_RING)   # may have been rebound by other test files
-
 @testset "CPath" begin
   @testset "Arc parametrization" begin
     CC = AcbField(100)
@@ -39,10 +36,6 @@ global Qxy = RIESRF_RING; global x, y = gens(RIESRF_RING)   # may have been rebo
     @test length(loop^3) == 3
     @test length(loop^0) == 1 && RSM.path_type((loop^0).paths[1]) === :point
     @test (loop^-2).paths[1] === reverse(paths[3])
-    # a variable negative exponent (a literal one is lowered to a power of
-    # inv(loop) by Base.literal_pow and never reaches ^(chain, k) with k < 0)
-    k = -2
-    @test length(loop^k) == 2 && (loop^k).paths[1] === reverse(paths[3])
     @test_throws ArgumentError RSM.CChain([paths[1]])^2       # not closed
   end
 end

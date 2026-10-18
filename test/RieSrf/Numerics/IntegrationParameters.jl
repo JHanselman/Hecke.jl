@@ -1,11 +1,9 @@
-isdefined(Main, :RSM) || include(joinpath(Hecke.pkgdir, "test", "RieSrfHelpers", "TestHelpers.jl"))
-global Qxy = RIESRF_RING; global x, y = gens(RIESRF_RING)   # may have been rebound by other test files
-
 @testset "IntegrationParameters" begin
   @testset "Integration parameters and lazy construction" begin
     f = FAST_CURVES[5][2]                                 # f2, genus 2
     RS = _rs(f, 100)
 
+    # construction is cheap: nothing expensive has been computed yet
     @test !isdefined(RS, :computational)                 # not even the model choice
     @test !isdefined(RSM.original_model(RS), :big_period_matrix)
     @test !isdefined(RSM.original_model(RS), :basis_of_differentials)
