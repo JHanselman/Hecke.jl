@@ -1,37 +1,44 @@
 # Tests of src/RieSrf. The test of src/RieSrf/<Folder>/<File>.jl is
-# test/RieSrf/<Folder>/<File>.jl; TestHelpers.jl holds the shared helpers and
-# test curves. The diagnostics in RieSrf/Diagnostics (precision suite,
-# homomorphism stress tests, the reconstruction on random curves) are not
+# test/RieSrf/<Folder>/<File>.jl. Shared helpers and test curves are in
+# test/RieSrf/setup_tests.jl, those of the reconstruction tests in
+# test/RieSrf/Reconstruction/setup_tests.jl; the setup_tests.jl of a directory
+# is included before every test file in it (docs/src/manual/developer/test.md).
+# Hecke._include_test does that here as well. The diagnostics in
+# test/RieSrfDiagnostics (precision suite, reconstruction) are not
 # part of the test run.
 @testset "RieSrf" begin
-  include("RieSrf/TestHelpers.jl")
-  include("RieSrf/Reconstruction/ReconstructionHelpers.jl")
-  include("RieSrf/Numerics/Auxiliary.jl")
-  include("RieSrf/Numerics/IntegrationParameters.jl")
-  include("RieSrf/Numerics/NumericalKernel.jl")
-  include("RieSrf/Paths/CPath.jl")
-  include("RieSrf/Paths/Topology.jl")
-  include("RieSrf/Paths/AnalyticContinuation.jl")
-  include("RieSrf/Periods/Quadrature/GaussLegendre.jl")
-  include("RieSrf/Periods/Quadrature/DoubleExponential.jl")
-  include("RieSrf/Periods/Quadrature/Grouping.jl")
-  include("RieSrf/Surface/RiemannSurface.jl")
-  include("RieSrf/Surface/Differentials.jl")
-  include("RieSrf/Surface/Fiber.jl")
-  include("RieSrf/Surface/SpaceCurves.jl")
-  include("RieSrf/Periods/ParallelIntegration.jl")
-  include("RieSrf/Periods/PeriodMatrix.jl")
-  include("RieSrf/Periods/Superelliptic.jl")
-  include("RieSrf/AbelJacobi/AbelJacobiMap.jl")
-  include("RieSrf/Theta.jl")
-  include("RieSrf/Endomorphisms/HeuristicEndomorphisms.jl")
-  include("RieSrf/Endomorphisms/Algebraization.jl")
-  include("RieSrf/Endomorphisms/EndomorphismStructure.jl")
-  include("RieSrf/Reconstruction/ReconstructCurvesG123.jl")
-  include("RieSrf/Reconstruction/ReconstructG4.jl")
-  include("RieSrf/Reconstruction/ThetaCharacteristics.jl")
-  include("RieSrf/Reconstruction/SignCorrection.jl")
-  include("RieSrf/Reconstruction/Hyperelliptic.jl")
-  include("RieSrf/Reconstruction/PlaneQuinticsAndCubicThreefolds.jl")
-  include("RieSrf/Reconstruction/CurveReconstruction.jl")
+  for file in [
+    "Numerics/Auxiliary.jl",
+    "Numerics/IntegrationParameters.jl",
+    "Numerics/NumericalKernel.jl",
+    "Paths/CPath.jl",
+    "Paths/Topology.jl",
+    "Paths/AnalyticContinuation.jl",
+    "Periods/Quadrature/GaussLegendre.jl",
+    "Periods/Quadrature/DoubleExponential.jl",
+    "Periods/Quadrature/Grouping.jl",
+    "Surface/RiemannSurface.jl",
+    "Surface/Differentials.jl",
+    "Surface/Fiber.jl",
+    "Surface/SpaceCurves.jl",
+    "Periods/ParallelIntegration.jl",
+    "Periods/PeriodMatrix.jl",
+    "Periods/Superelliptic.jl",
+    "AbelJacobi/RieSrfPoints.jl",
+    "AbelJacobi/Divisors.jl",
+    "AbelJacobi/AbelJacobiMap.jl",
+    "Theta.jl",
+    "Endomorphisms/HeuristicEndomorphisms.jl",
+    "Endomorphisms/Algebraization.jl",
+    "Endomorphisms/EndomorphismStructure.jl",
+    "Reconstruction/ReconstructCurvesG123.jl",
+    "Reconstruction/ReconstructG4.jl",
+    "Reconstruction/ThetaCharacteristics.jl",
+    "Reconstruction/SignCorrection.jl",
+    "Reconstruction/Hyperelliptic.jl",
+    "Reconstruction/PlaneQuinticsAndCubicThreefolds.jl",
+    "Reconstruction/CurveReconstruction.jl",
+  ]
+    Hecke._include_test(joinpath(@__DIR__, "RieSrf", file))
+  end
 end

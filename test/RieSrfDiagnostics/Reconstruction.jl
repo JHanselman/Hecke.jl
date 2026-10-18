@@ -1,12 +1,11 @@
 ################################################################################
 #
-#  Diagnostics/Reconstruction.jl : the reconstruction (genus g >= 5) on
+#  RieSrfDiagnostics/Reconstruction.jl : the reconstruction (genus g >= 5) on
 #  random curves. Not part of the test run; load after the package:
 #
 #    using Hecke, Test
-#    include("test/RieSrf/TestHelpers.jl")
-#    include("test/RieSrf/Reconstruction/ReconstructionHelpers.jl")
-#    include("test/RieSrf/Diagnostics/Reconstruction.jl")
+#    include("test/RieSrf/Reconstruction/setup_tests.jl")
+#    include("test/RieSrfDiagnostics/Reconstruction.jl")
 #    test_random_quadrics(5; count = 3)
 #    test_random_plane_quintics(; count = 3)
 #    test_random_hyperelliptic(5; count = 3)

@@ -119,7 +119,11 @@ function reconstruct_hyperelliptic_curve(P::AcbMatrix, K = QQ; place = nothing)
   D = G * _inv_precond(P[:, 1:g])
   scale = maximum(_abs64(D[i, j]) for i in 1:nrows(D), j in 1:g)
   CCx, x = polynomial_ring(CC, :x; cached = false)
-  points = AcbFieldElem[]
+  # the roots of all gradients, grouped: a branch point is a root of many
+  # gradients (all theta divisors that contain it); spurious roots (gradients
+  # that are numerically zero or of lower degree) of few
+  clusters = Tuple{AcbFieldElem, Int}[]
+  tolerance = 2.0^(-prec / 16)
   for r in 1:nrows(D)
     d = [D[r, j] for j in 1:g]
     size = maximum(_abs64, d)
@@ -128,10 +132,24 @@ function reconstruct_hyperelliptic_curve(P::AcbMatrix, K = QQ; place = nothing)
     _abs64(d[g]) < 2.0^(-prec / 8) * size && continue
     p = sum(d[j] * x^(j - 1) for j in 1:g)
     for root in roots(p)
-      any(q -> _abs64(q - root) < 2.0^(-prec / 8) * (1 + _abs64(root)), points) || push!(points, root)
+      k = findfirst(c -> _abs64(c[1] - root) < tolerance * (1 + _abs64(root)), clusters)
+      if k === nothing
+        push!(clusters, (root, 1))
+      else
+        # keep the most precise representative
+        best = _radius64(root) < _radius64(clusters[k][1]) ? root : clusters[k][1]
+        clusters[k] = (best, clusters[k][2] + 1)
+      end
     end
   end
-  @req length(points) in (2*g + 1, 2*g + 2) "Found $(length(points)) branch points instead of $(2*g + 1) or $(2*g + 2): not a hyperelliptic curve with these differentials, or not enough precision."
+  sort!(clusters; by = c -> -c[2])
+  counts = [c[2] for c in clusters]
+  @req length(clusters) >= 2*g + 1 "Found only $(length(clusters)) branch points: not a hyperelliptic curve with these differentials (the rows of P must be x^(j-1) dx / y), or not enough precision."
+  # 2g + 2 finite branch points, or 2g + 1 and one at infinity: the next
+  # cluster is spurious if it is much rarer
+  finite = length(clusters) > 2*g + 1 && counts[2*g + 2] > counts[2*g + 1] / 4 ? 2*g + 2 : 2*g + 1
+  @req length(clusters) == finite || counts[finite + 1] < counts[finite] / 4 "The roots of the gradients do not separate into branch points (counts $(counts[1:min(end, 2*g + 4)])): not a hyperelliptic curve with these differentials (the rows of P must be x^(j-1) dx / y), or not enough precision."
+  points = [c[1] for c in clusters[1:finite]]
   f = prod(x - a for a in points)
   F, _, recognize, _ = _g4_field_data(K, place, CC)
   coefficients_K = [recognize(coeff(f, k)) for k in 0:degree(f)]

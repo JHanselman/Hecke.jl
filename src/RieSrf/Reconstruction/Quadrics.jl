@@ -144,11 +144,21 @@ end
 ################################################################################
 
 # The gradients at z = 0 of the theta functions of the characteristics
-# `chars` (FLINT's acb_theta_jet, one characteristic at a time), as a matrix
-# (rows: the characteristics)
+# `chars` (FLINT's acb_theta_jet: for a few characteristics one at a time,
+# otherwise all at once), as a matrix (rows: the characteristics)
 function _odd_theta_gradients(tau::AcbMatrix, chars)
   g = nrows(tau)
   CC = base_ring(tau)
+  G = zero_matrix(CC, length(chars), g)
+  if length(chars) > 4*g
+    # many characteristics: all at once (one acb_theta_jet call for all)
+    jets = Hecke.theta_jets([zero(CC) for _ in 1:g], tau, 1)
+    unit(i) = g == 1 ? 1 : ntuple(j -> j == i ? 1 : 0, g)
+    for (r, c) in enumerate(chars), i in 1:g
+      G[r, i] = jets[Tuple(c)][unit(i)]
+    end
+    return G
+  end
   prec = precision(CC)
   n = ccall((:acb_theta_jet_nb, libflint), Int, (Int, Int), 1, g)
   tuples = zeros(Int, n * g)
@@ -156,7 +166,6 @@ function _odd_theta_gradients(tau::AcbMatrix, chars)
                             pointer(tuples), 1, g)
   # the position of the derivative in z_i among the jets
   position = [findfirst(k -> tuples[g*(k-1)+1:g*k] == [j == i ? 1 : 0 for j in 1:g], 1:n) for i in 1:g]
-  G = zero_matrix(CC, length(chars), g)
   zs = acb_vec([zero(CC) for _ in 1:g])
   jets = acb_vec(n)
   for (r, c) in enumerate(chars)

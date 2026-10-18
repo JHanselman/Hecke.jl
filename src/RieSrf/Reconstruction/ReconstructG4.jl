@@ -104,8 +104,7 @@ function _g4_vanishing_theta_null(th)
 end
 
 # The 10 vanishing even characteristics are eta_U + eta_i (i = 1..10, eta_10 = 0
-# for the branch point at infinity), so eta_i = v_i + v_10 for any numbering
-# v_1, ..., v_10 (a numbering of the branch points).
+# for the branch point at infinity); the Rosenhain form by Takase's formula.
 function _g4_hyperelliptic(th, vanishing)
   CC = parent(th[ntuple(_ -> 0, 8)])
   lambdas = _g4_rosenhain(th, vanishing)
@@ -116,12 +115,12 @@ end
 
 # The Rosenhain invariants lambda_3..lambda_9
 function _g4_rosenhain(th, vanishing)
-  v = sort([collect(c) for c in vanishing])
-  eta = [mod.(v[i] + v[10], 2) for i in 1:9]
-  push!(eta, zeros(Int, 8))
-  U = union([i for i in 1:10 if _is_odd_characteristic(eta[i])], [10])
-  eta_U = mod.(sum(eta[i] for i in U), 2)
-  @req all(mod.(eta_U + eta[i], 2) == v[i] for i in 1:10) "The vanishing even theta constants do not have the configuration of a hyperelliptic curve."
+  # eta_1..eta_10 and U (containing 10, of size 5) from the pattern of the
+  # vanishing theta constants (Hyperelliptic.jl). (Taking eta_i = v_i + v_10
+  # for the sorted vanishing v_i and U from the parities of the eta_i gives
+  # the right eta_U, but U itself can have the wrong size, and then Takase's
+  # quotients are wrong.)
+  eta, U = _hyperelliptic_eta(4, th, vanishing)
   thetas_sq = Dict(ch => x^2 for (ch, x) in th)
   return [_takase_quotient(thetas_sq, eta, U, 1, l, 2) for l in 3:9]
 end
