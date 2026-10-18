@@ -22,7 +22,7 @@
   f = a*X^2*Y + 3*Y^3 - X + 1
   F = RSM._embed_mpoly(f, v, 128)
   @test precision(base_ring(F)) == 128 && length(F) == length(f)
-  @test all(collect(exponent_vectors(F)) .== collect(exponent_vectors(f)))
+  @test all(collect(Hecke.exponent_vectors(F)) .== collect(Hecke.exponent_vectors(f)))
   @test all(overlaps(c, RSM._embed_coefficient(d, v.embedding, 128))
             for (c, d) in zip(coefficients(F), coefficients(f)))
   Kt, T = polynomial_ring(K, :T)

@@ -4,7 +4,7 @@
 # test/RieSrf/Reconstruction/setup_tests.jl; the setup_tests.jl of a directory
 # is included before every test file in it (docs/src/manual/developer/test.md).
 # Hecke._include_test does that here as well. The diagnostics in
-# test/RieSrfDiagnostics (precision suite, genus 4 reconstruction) are not
+# test/RieSrfDiagnostics (precision suite, reconstruction) are not
 # part of the test run.
 @testset "RieSrf" begin
   for file in [
@@ -33,6 +33,11 @@
     "Endomorphisms/EndomorphismStructure.jl",
     "Reconstruction/ReconstructCurvesG123.jl",
     "Reconstruction/ReconstructG4.jl",
+    "Reconstruction/ThetaCharacteristics.jl",
+    "Reconstruction/SignCorrection.jl",
+    "Reconstruction/Hyperelliptic.jl",
+    "Reconstruction/PlaneQuinticsAndCubicThreefolds.jl",
+    "Reconstruction/CurveReconstruction.jl",
   ]
     Hecke._include_test(joinpath(@__DIR__, "RieSrf", file))
   end

@@ -264,14 +264,14 @@ if !isdefined(@__MODULE__, :random_g4_reconstruction_tests)
     form(c, es) = sum(c[k] * prod(X[i]^es[k][i] for i in 1:4) for k in eachindex(es))
     # the quadric: the relation between the products of two monomials
     images2 = [image(e) for e in e2]
-    monos2 = unique(vcat([collect(monomials(p)) for p in images2]...))
+    monos2 = unique(vcat([collect(Hecke.monomials(p)) for p in images2]...))
     A = matrix(QQ, length(e2), length(monos2), [coeff(p, mo) for p in images2 for mo in monos2])
     K = kernel(A; side = :left)
     @req nrows(K) == 1 "The monomials do not satisfy exactly one quadric relation."
     Q = form([K[1, k] for k in 1:ncols(K)], e2)
     # the cubic: f as a cubic form in the monomials
     images3 = [image(e) for e in e3]
-    monos3 = unique(vcat(collect(monomials(f)), [collect(monomials(p)) for p in images3]...))
+    monos3 = unique(vcat(collect(Hecke.monomials(f)), [collect(Hecke.monomials(p)) for p in images3]...))
     B = matrix(QQ, length(e3), length(monos3), [coeff(p, mo) for p in images3 for mo in monos3])
     b = matrix(QQ, 1, length(monos3), [coeff(f, mo) for mo in monos3])
     solvable, c = can_solve_with_solution(B, b; side = :left)
@@ -352,7 +352,7 @@ if !isdefined(@__MODULE__, :random_g4_reconstruction_tests)
     CC = parent(lambdas[1])
     prec = precision(CC)
     Qt, t = polynomial_ring(QQ, :t; cached = false)
-    h = sum(c * t^e[1] for (c, e) in zip(coefficients(f), exponent_vectors(f)) if e[2] == 0)
+    h = sum(c * t^e[1] for (c, e) in zip(coefficients(f), Hecke.exponent_vectors(f)) if e[2] == 0)
     CCt, _ = polynomial_ring(CC, :t; cached = false)
     bps = RSM._accurate_roots(map_coefficients(CC, h; parent = CCt), prec)
     # all branch points finite: z -> 1/(z - c), oo -> 0
@@ -528,7 +528,7 @@ if !isdefined(@__MODULE__, :random_g4_reconstruction_tests)
 
   # y^2 = h(x) or c y^2 + h(x) = 0
   function _is_hyperelliptic_model(f::MPolyRingElem)
-    for (c, e) in zip(coefficients(f), exponent_vectors(f))
+    for (c, e) in zip(coefficients(f), Hecke.exponent_vectors(f))
       (e[2] == 0 || e == [0, 2]) || return false
     end
     return true
@@ -628,5 +628,151 @@ if !isdefined(@__MODULE__, :random_g4_reconstruction_tests)
     nok = count(r -> r.ok, results)
     println("$nok of $(length(results)) rational reconstructions verified exactly.")
     return results
+  end
+end
+
+if !isdefined(@__MODULE__, :moebius_distance)
+  ################################################################################
+  #
+  #  Genus g >= 5
+  #
+  #  A generic genus 5 curve with known canonical model (canonical_test_curve_g5)
+  #  and the period matrix of its canonical differentials, the hyperelliptic
+  #  comparison by a Moebius map (any genus), a trigonal genus 5 curve and
+  #  random smooth plane quintics.
+  #
+  ################################################################################
+
+  function canonical_test_curve_g5(; coefficients = -3:3)
+    S, X = polynomial_ring(QQ, ["X$i" for i in 1:5]; cached = false)
+    R, (x, y) = polynomial_ring(QQ, [:x, :y]; cached = false)
+    random() = QQ(rand(coefficients))
+    linear() = sum(random() * X[i] for i in 1:3)
+    quadratic(n) = sum(random() * X[i] * X[j] for i in 1:n for j in i:n)
+    plane(p) = evaluate(p, [x, y, one(R), zero(R), zero(R)])
+    while true
+      a, b, c = [linear() for _ in 1:2], [linear() for _ in 1:2], [quadratic(3) for _ in 1:2]
+      quadrics = [[a[k] * X[4] + b[k] * X[5] + c[k] for k in 1:2]; quadratic(5)]
+      A1, B1, C1, A2, B2, C2 = plane.((a[1], b[1], c[1], a[2], b[2], c[2]))
+      D = A1 * B2 - A2 * B1
+      numerators = [x * D, y * D, D, B1 * C2 - B2 * C1, A2 * C1 - A1 * C2]
+      @assert all(q -> iszero(evaluate(q, numerators)), quadrics[1:2])
+      F = evaluate(quadrics[3], numerators)     # D^2 Q3(x, y, 1, X4, X5)
+      fac = factor(F)
+      total_degree(F) == 6 && length(fac) == 1 && all(e == 1 for (_, e) in fac) || continue
+      return (quadrics = quadrics, plane = F, numerators = numerators)
+    end
+  end
+
+  # The function field of the computational model of RS, the map of
+  # polynomials in x, y to it and the differentials of big_period_matrix(RS)
+  # divided by dx
+  function _differentials_in_function_field(RS)
+    C = RSM.computational_model(RS)
+    RSM._ensure_differentials!(C)
+    rational(c) = c isa QQFieldElem ? c : coeff(c, 0)
+    f = C.defining_polynomial
+    kx, t = rational_function_field(QQ, "x"; cached = false)
+    kxy, u = polynomial_ring(kx, "y"; cached = false)
+    F, a = function_field(sum(rational(c) * t^e[1] * u^e[2] for (c, e) in zip(Hecke.coefficients(f), Hecke.exponent_vectors(f))), "a")
+    to_F(p) = sum((rational(c) * F(t)^e[1] * a^e[2] for (c, e) in zip(Hecke.coefficients(p), Hecke.exponent_vectors(p))); init = zero(F))
+    factor_set, factor_matrix, _, _ = RSM.differential_form_data(C)
+    factors = [to_F(p) for p in factor_set]
+    # (function field elements have no negative powers)
+    power(z, e) = e >= 0 ? z^e : inv(z)^(-e)
+    ys = [prod(power(factors[l], factor_matrix[l, k]) for l in eachindex(factors)) for k in 1:size(factor_matrix, 2)]
+    return to_F, ys
+  end
+
+  # Function field elements as the rows of a matrix over QQ
+  function _rational_coefficient_matrix(elements)
+    R, (X, _) = polynomial_ring(QQ, [:x, :y]; cached = false)
+    numerators = [RSM._to_mpoly(R, numerator(p)) for p in elements]
+    denominators = [denominator(p) for p in elements]
+    common = reduce(lcm, denominators)
+    scaled = [n * divexact(common, d)(X) for (n, d) in zip(numerators, denominators)]
+    monos = unique(vcat([collect(Hecke.monomials(p)) for p in scaled]...))
+    return matrix(QQ, length(scaled), length(monos), [coeff(p, m) for p in scaled for m in monos])
+  end
+
+  # The big period matrix of the differentials A dx / F_y (A in `numerators`)
+  function period_matrix_of_differentials(RS, F::MPolyRingElem, numerators)
+    to_F, ys = _differentials_in_function_field(RS)
+    @req iszero(to_F(F)) "F is not the plane model of RS (model = :original)."
+    Fy = inv(to_F(derivative(F, 2)))
+    Y = _rational_coefficient_matrix([ys; [to_F(A) * Fy for A in numerators]])
+    g = length(ys)
+    M = zero_matrix(QQ, length(numerators), g)
+    for i in eachindex(numerators)
+      N = kernel(Y[[1:g; g + i], :]; side = :left)
+      @req nrows(N) == 1 && !iszero(N[1, g + 1]) "The differential $i is not holomorphic (or the basis of RS is not one)."
+      for k in 1:g
+        M[i, k] = -N[1, k] // N[1, g + 1]
+      end
+    end
+    Pi = RSM.big_period_matrix(RS)
+    CC = base_ring(Pi)
+    return matrix(CC, nrows(M), g, [CC(M[i, k]) for i in 1:nrows(M) for k in 1:g]) * Pi
+  end
+
+  # Whether the forms span the same space over QQ (exact)
+  function same_span(forms1, forms2, d::Int)
+    g = nvars(parent(forms1[1]))
+    e = RSM._exponent_vectors(g, d)
+    coefficient_matrix(fs) = matrix(QQ, length(fs), length(e), [QQ(coeff(f, m)) for f in fs for m in e])
+    A, B = coefficient_matrix(forms1), coefficient_matrix(forms2)
+    return rank(A) == length(forms1) == rank(B) == length(forms2) == rank(vcat(A, B))
+  end
+
+  # log2 of the relative distance between the finite part {0, 1, lambda_l} of
+  # the Rosenhain form y^2 = x (x - 1) prod (x - lambda_l) and the images of the
+  # branch points of y^2 = h(x) under the best Moebius map sending three of them
+  # to 0, 1, oo (found in Float64, evaluated at full precision)
+  function moebius_distance(h::PolyRingElem, lambdas::Vector{AcbFieldElem})
+    CC = parent(lambdas[1])
+    prec = precision(CC)
+    CCt, _ = polynomial_ring(CC, :t; cached = false)
+    points = RSM._accurate_roots(map_coefficients(CC, h; parent = CCt), prec)
+    isodd(degree(h)) && push!(points, CC(10)^100)        # the branch point at infinity, approximately
+    targets = [[zero(CC), one(CC)]; lambdas]
+    pf = [RSM._c64(p) for p in points]
+    tf = [RSM._c64(l) for l in targets]
+    n = length(points)
+    best, triple = Inf, (1, 2, 3)
+    for i in 1:n, j in 1:n, k in 1:n
+      length(unique([i, j, k])) == 3 || continue
+      moebius64(z) = (z - pf[i]) * (pf[j] - pf[k]) / ((z - pf[k]) * (pf[j] - pf[i]))
+      d = maximum(minimum(abs(moebius64(pf[l]) - t) for t in tf) for l in 1:n if l != k)
+      d < best && ((best, triple) = (d, (i, j, k)))
+    end
+    i, j, k = triple
+    moebius(z) = (z - points[i]) * (points[j] - points[k]) / ((z - points[k]) * (points[j] - points[i]))
+    scale = max(1.0, maximum(abs, tf))
+    worst = 0.0
+    for l in 1:n
+      l == k && continue
+      z = moebius(points[l])
+      nearest = argmin([abs(RSM._c64(z) - t) for t in tf])
+      worst = max(worst, RSM._abs64(z - targets[nearest]) / scale)
+    end
+    return RSM._safe_log2(worst)
+  end
+
+  # A trigonal genus 5 curve (on a scroll; its quadrics do not cut it out)
+  function trigonal_test_curve()
+    R, (x, y) = polynomial_ring(QQ, [:x, :y]; cached = false)
+    return 2*x^5*y^3 + 5*x^4*y^3 - 9*x^4*y^2 + 3*x^3*y - 4*x^2*y^2 - 3*x*y^3 + 1
+  end
+
+  # A random smooth plane quintic over QQ (genus 6, Baker's basis)
+  function plane_quintic_test_curve(; coefficients = -3:3)
+    R, (x, y) = polynomial_ring(QQ, [:x, :y]; cached = false)
+    while true
+      F = sum(QQ(rand(coefficients)) * x^i * y^j for i in 0:5 for j in 0:5 - i)
+      total_degree(F) == 5 || continue
+      length(RSM._newton_polygon_interior_points(F)) == 6 || continue
+      RSM._baker_certified(F, 6) || continue
+      return F
+    end
   end
 end
