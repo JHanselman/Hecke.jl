@@ -196,7 +196,7 @@ function reconstruct_hyperelliptic_curve(P::AcbMatrix, K = QQ; place = nothing)
     # a branch point at infinity lowers the degree; only full degree is used
     _abs64(d[g]) < 2.0^(-prec / 8) * size && continue
     p = sum(d[j] * x^(j - 1) for j in 1:g)
-    for root in roots(p)
+    for root in _accurate_roots(p, prec)
       k = findfirst(c -> _abs64(c[1] - root) < tolerance * (1 + _abs64(root)), clusters)
       if k === nothing
         push!(clusters, (root, 1))
