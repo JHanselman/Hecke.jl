@@ -138,30 +138,34 @@ function _vanishing_gradient_characteristic(g::Int, K::AcbMatrix)
 end
 
 # The model over CC from the theta constants of genus g >= 5: the case and
-# the equations, with the data needed over K
+# the equations, with the data needed over K. tau and transform: as in
+# _reduced_theta_constants, if known; the result contains the basis actually
+# used (thetas, tau, transform; see _plane_quintic_safe_basis).
 function _curve_from_thetas(g::Int, thetas; prec::Int = precision(parent(first(values(thetas)))),
-                            plane_model::Bool = true, kw...)
+                            plane_model::Bool = true, tau = nothing, transform = nothing, kw...)
   vanishing = _vanishing_even_theta_constants(thetas, prec)
   if length(vanishing) == _hyperelliptic_vanishing_count(g)
     curve, lambdas = _hyperelliptic_curve_from_thetas(g, thetas, vanishing)
-    return (case = :hyperelliptic, curve = curve, rosenhain = lambdas, vanishing = vanishing)
+    return (case = :hyperelliptic, curve = curve, rosenhain = lambdas, vanishing = vanishing,
+            thetas = thetas, tau = tau, transform = transform)
   end
-  @req isempty(vanishing) "$(length(vanishing)) even theta constants vanish: expected 0 or $(_hyperelliptic_vanishing_count(g)) (hyperelliptic). A curve with a vanishing theta null, a decomposable Jacobian, or not enough precision?"
-  data = reconstruct_quadrics_from_thetas(g, thetas; kw...)
+  basis, gradient_kernel = _plane_quintic_safe_basis(g, thetas, tau, transform; kw...)
+  thetas = basis.thetas
+  data = reconstruct_quadrics_from_thetas(g, thetas; gradient_kernel, kw...)
   rank3, expected = _quadric_multiples_rank(data.quadrics)
   if rank3 == expected
-    return (case = :generic, curve = data.quadrics, quadrics = data.quadrics, data = data)
+    return merge((case = :generic, curve = data.quadrics, quadrics = data.quadrics, data = data), basis)
   end
   M = _prym_monomial_quadrics(g, data.gradients, data.prym_gradients, parent(data.quadrics[1]))
   all_cubics, cubics = _cubics_through_curve(data.quadrics, M)
   kappa = g == 6 ? _vanishing_gradient_characteristic(g, data.gradients) : nothing
   if kappa === nothing
-    return (case = :trigonal, curve = [data.quadrics; cubics], quadrics = data.quadrics,
-            cubics = cubics, all_cubics = all_cubics, data = data)
+    return merge((case = :trigonal, curve = [data.quadrics; cubics], quadrics = data.quadrics,
+                  cubics = cubics, all_cubics = all_cubics, data = data), basis)
   end
   curve = plane_model ? _plane_quintic_from_thetas(thetas, kappa; kw...) : [data.quadrics; cubics]
-  return (case = :plane_quintic, curve = curve,
-          quadrics = data.quadrics, cubics = cubics, all_cubics = all_cubics, kappa = kappa, data = data)
+  return merge((case = :plane_quintic, curve = curve, quadrics = data.quadrics, cubics = cubics,
+                all_cubics = all_cubics, kappa = kappa, data = data), basis)
 end
 
 ################################################################################
@@ -186,11 +190,13 @@ function reconstruct_curve_data(tau::AcbMatrix; kw...)
   g = nrows(tau)
   @req ncols(tau) == g && g >= 5 "tau must be a g x g matrix with g >= 5 (for g <= 4 use reconstruct_curve)."
   thetas, tau_red, T = _reduced_theta_constants(tau)
-  return merge(_curve_from_thetas(g, thetas; prec = precision(base_ring(tau)), kw...),
-               (thetas = thetas, tau = tau_red, transform = T))
+  return _curve_from_thetas(g, thetas; prec = precision(base_ring(tau)), tau = tau_red, transform = T, kw...)
 end
 
-reconstruct_curve_data(thetas::AbstractDict; kw...) = _curve_from_thetas(_genus_of_thetas(thetas), thetas; kw...)
+function reconstruct_curve_data(thetas::AbstractDict; kw...)
+  thetas = _theta_constants_avoiding_prym(thetas)
+  return _curve_from_thetas(_genus_of_thetas(thetas), thetas; kw...)
+end
 
 @doc raw"""
     reconstruct_curve(tau::AcbMatrix; kw...)

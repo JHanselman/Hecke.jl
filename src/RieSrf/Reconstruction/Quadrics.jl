@@ -33,10 +33,82 @@
 _genus_of_thetas(thetas) = div(length(first(keys(thetas))), 2)
 
 # All theta constants of tau by FLINT (tau is Siegel reduced first: T, the
-# transformation, and the reduced tau are returned too)
+# transformation, and the reduced tau are returned too). For g >= 5 the basis
+# is changed further if a vanishing theta null would make a theta constant of
+# the Prym vanish (_prym_safe_transformations).
 function _reduced_theta_constants(tau::AcbMatrix)
   T, tau_red = Hecke.siegel_reduction(tau)
-  return theta_constants(tau_red), tau_red, T
+  thetas = theta_constants(tau_red)
+  g = nrows(tau)
+  g >= 5 || return thetas, tau_red, T
+  prec = precision(base_ring(tau))
+  vanishing = _vanishing_even_theta_constants(thetas, prec)
+  _vanishing_outside_prym(vanishing) && return thetas, tau_red, T
+  for M in _prym_safe_transformations(vanishing, g)
+    thetas2, tau2, T2 = _moved_basis(M, thetas, tau_red, T)
+    _vanishing_outside_prym(_vanishing_even_theta_constants(thetas2, prec)) && return thetas2, tau2, T2
+  end
+  error("No symplectic basis in which the vanishing theta constants avoid the Prym.")
+end
+
+# For g = 6 the curve may be a plane quintic (kappa: the odd characteristic
+# with vanishing gradient); the Prym of eta = (0..0; 1 0..0) is then a
+# Jacobian only if kappa + eta is even, otherwise the basis is changed
+# (_moved_basis, keeping tau and T consistent). Returns the basis and the
+# gradient kernel of the curve if it is still valid (else nothing).
+function _plane_quintic_safe_basis(g::Int, thetas, tau, T; rhos = nothing, fay_relations = nothing, kw...)
+  basis = (thetas = thetas, tau = tau, transform = T)
+  g == 6 || return basis, nothing
+  gradient_kernel = odd_theta_gradient_kernel(g, thetas; rhos = rhos, relations = fay_relations)
+  kappa = _vanishing_gradient_characteristic(g, gradient_kernel[1])
+  M = kappa === nothing ? nothing : _eta_parity_transformation(kappa, 0, g)
+  M === nothing && return basis, gradient_kernel
+  thetas2, tau2, T2 = _moved_basis(M, thetas, tau, T)
+  return (thetas = thetas2, tau = tau2, transform = T2), nothing
+end
+
+# The theta constants in the basis changed by the symplectic matrix M
+# (characteristics as in _igusa_action), with tau and the transformation T
+# (M tau = Hecke.siegel_transform(M, tau); theta constants by FLINT) if tau is
+# known, otherwise by Igusa's transformation formula (up to a common factor).
+function _moved_basis(M::Matrix{Int}, thetas, tau, T)
+  tau === nothing && return _transform_theta_constants(thetas, M, _genus_of_thetas(thetas)), nothing, nothing
+  MZ = matrix(ZZ, M)
+  tau2 = Hecke.siegel_transform(MZ, tau)
+  tau2 = (tau2 + transpose(tau2)) * inv(base_ring(tau2)(2))
+  return theta_constants(tau2), tau2, MZ * T
+end
+
+# The theta constants of the Prym for eta = (0..0; 1 0..0) are the products
+# theta[0 a; 0 b] theta[0 a; 1 b] (prym_thetas): a vanishing even
+# characteristic of the curve makes one of them vanish unless its first bit
+# is 1. For hyperelliptic curves (where this cannot be avoided) nothing is
+# moved.
+function _vanishing_outside_prym(vanishing)
+  isempty(vanishing) && return true
+  g = div(length(first(vanishing)), 2)
+  length(vanishing) == _hyperelliptic_vanishing_count(g) && return true
+  return all(c -> c[1] == 1, vanishing)
+end
+
+# Candidate symplectic matrices (single transvections, then products of two)
+# that move all characteristics in `vanishing` to ones with first bit 1
+function _prym_safe_transformations(vanishing, g::Int)
+  moves(M) = _vanishing_outside_prym([Tuple(_f2(_igusa_action(M, collect(c), g)[1])) for c in vanishing])
+  transvections = [_integral_transvection(collect(_char_from_mask(mask, g)), g) for mask in 1:4^g - 1]
+  return Iterators.flatten((Iterators.filter(moves, transvections),
+                            Iterators.filter(moves, (s * t for s in transvections[1:min(end, 64)] for t in transvections))))
+end
+
+# The same on the theta constants only (Igusa's transformation formula, up to
+# a common factor)
+function _theta_constants_avoiding_prym(thetas)
+  g = _genus_of_thetas(thetas)
+  g >= 5 || return thetas
+  prec = precision(parent(first(values(thetas))))
+  vanishing = _vanishing_even_theta_constants(thetas, prec)
+  _vanishing_outside_prym(vanishing) && return thetas
+  return _transform_theta_constants(thetas, first(_prym_safe_transformations(vanishing, g)), g)
 end
 
 ################################################################################
@@ -125,12 +197,15 @@ of (g - 2)(g - 3)/2 (5 for the intermediate Jacobian of a cubic threefold).
 function reconstruct_quadrics_from_thetas(g::Int, thetas; sign_data = nothing, rhos = nothing,
                                           prym_rhos = nothing, fay_relations = nothing,
                                           prym_fay_relations = nothing, sign_fallback::Bool = true,
-                                          strict::Bool = true, quadric_count::Union{Int, Nothing} = nothing)
+                                          strict::Bool = true, quadric_count::Union{Int, Nothing} = nothing,
+                                          gradient_kernel = nothing)
   @req g >= 5 "Only for g >= 5."
   thetas_prym = prym_thetas(g, thetas)
   _, sufficient = correct_signs_with_data!(thetas_prym, g - 1, _loaded_sign_data(sign_data, g - 1);
                                            fallback = sign_fallback)
-  K, q_K = odd_theta_gradient_kernel(g, thetas; rhos = rhos, relations = fay_relations)
+  # gradient_kernel: (K, log2 residual) of these theta constants, if known
+  K, q_K = gradient_kernel === nothing ? odd_theta_gradient_kernel(g, thetas; rhos = rhos, relations = fay_relations) :
+                                         gradient_kernel
   K_prym, q_K_prym = odd_theta_gradient_kernel(g - 1, thetas_prym; rhos = prym_rhos, relations = prym_fay_relations)
   quadrics, q = _quadrics_from_gradients(g, K, K_prym; strict = strict, quadric_count = quadric_count)
   info = merge((gradients = q_K, prym_gradients = q_K_prym, sign_data_sufficed = sufficient), q)
@@ -311,9 +386,13 @@ function _quadrics_data(tau::AcbMatrix; coordinates::Bool = false, kw...)
   g = nrows(tau)
   @req ncols(tau) == g && g >= 5 "tau must be a g x g matrix with g >= 5."
   thetas, tau_red, T = _reduced_theta_constants(tau)
+  basis, gradient_kernel = _plane_quintic_safe_basis(g, thetas, tau_red, T; kw...)
+  thetas, tau_red, T = basis
   vanishing = _vanishing_even_theta_constants(thetas, precision(base_ring(tau)))
-  @req isempty(vanishing) "$(length(vanishing)) even theta constants vanish: not a generic curve (see reconstruct_curve)."
-  data = reconstruct_quadrics_from_thetas(g, thetas; kw...)
+  # vanishing theta nulls carry no sign and are skipped by the sign correction;
+  # a hyperelliptic curve is not cut out by quadrics
+  @req length(vanishing) != _hyperelliptic_vanishing_count(g) "The curve is hyperelliptic: its canonical image is not cut out by quadrics (see reconstruct_hyperelliptic_curve)."
+  data = reconstruct_quadrics_from_thetas(g, thetas; gradient_kernel, kw...)
   B, q_B = coordinates ? _gradient_coordinates(tau_red, data.gradients) : (nothing, NaN)
   return merge(data, (thetas = thetas, tau = tau_red, transform = T, coordinates = B,
                       info = merge(data.info, (coordinates = q_B,))))
@@ -352,8 +431,11 @@ function reconstruct_quadrics(tau::AcbMatrix; kw...)
   return reconstruct_quadrics(tau, nothing; kw...)
 end
 
-reconstruct_quadrics(thetas::AbstractDict; kw...) =
-  reconstruct_quadrics_from_thetas(_genus_of_thetas(thetas), thetas; kw...).quadrics
+function reconstruct_quadrics(thetas::AbstractDict; kw...)
+  g = _genus_of_thetas(thetas)
+  basis, gradient_kernel = _plane_quintic_safe_basis(g, _theta_constants_avoiding_prym(thetas), nothing, nothing; kw...)
+  return reconstruct_quadrics_from_thetas(g, basis.thetas; gradient_kernel, kw...).quadrics
+end
 
 function reconstruct_quadrics(P::AcbMatrix, K; place = nothing, normalize::Bool = true,
                               reduce_units::Bool = true, numerical::Bool = false, kw...)

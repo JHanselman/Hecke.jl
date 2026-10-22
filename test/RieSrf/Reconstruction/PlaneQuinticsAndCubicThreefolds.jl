@@ -20,6 +20,7 @@
   @test RSM._laplace_determinant(M) == det(matrix(R, M))
 
   if riesrf_long_tests()
+    Hecke.Random.seed!(4711)
     F5 = plane_quintic_test_curve()
     RS = RSM.riemann_surface(F5, 500; superelliptic = false, model = :original)
     tau = RSM.small_period_matrix(RS)

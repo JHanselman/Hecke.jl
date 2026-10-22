@@ -27,13 +27,20 @@
 # Jacobian): unchanged if it already has, otherwise for the first eta that has
 function _move_eta_for_parity(thetas, kappa, parity::Int)
   g = _genus_of_thetas(thetas)
+  M = _eta_parity_transformation(kappa, parity, g)
+  M === nothing && return thetas
+  return _transform_theta_constants(thetas, M, g)
+end
+
+# A symplectic matrix that maps an eta with the parity `parity` of
+# kappa + eta to eta = (0..0; 1 0..0), or nothing if the standard eta has it
+function _eta_parity_transformation(kappa, parity::Int, g::Int)
   standard = [i == g + 1 ? 1 : 0 for i in 1:2*g]
   parity_of(eta) = _is_even(_f2(collect(kappa) .+ eta)) ? 0 : 1
-  parity_of(standard) == parity && return thetas
+  parity_of(standard) == parity && return nothing
   for mask in 1:4^g - 1
     eta = collect(_char_from_mask(mask, g))
-    parity_of(eta) == parity || continue
-    return _transform_theta_constants(thetas, _eta_to_standard(eta, g), g)
+    parity_of(eta) == parity && return _eta_to_standard(eta, g)
   end
   error("No 2-torsion point with the required parity.")
 end
