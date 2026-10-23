@@ -44,11 +44,9 @@ function _reduced_theta_constants(tau::AcbMatrix)
   prec = precision(base_ring(tau))
   vanishing = _vanishing_even_theta_constants(thetas, prec)
   _vanishing_outside_prym(vanishing) && return thetas, tau_red, T
-  for M in _prym_safe_transformations(vanishing, g)
-    thetas2, tau2, T2 = _moved_basis(M, thetas, tau_red, T)
-    _vanishing_outside_prym(_vanishing_even_theta_constants(thetas2, prec)) && return thetas2, tau2, T2
-  end
-  error("No symplectic basis in which the vanishing theta constants avoid the Prym.")
+  candidate = iterate(_prym_safe_transformations(vanishing, g))
+  @req candidate !== nothing "No symplectic basis in which the vanishing theta constants avoid the Prym."
+  return _moved_basis(candidate[1], thetas, tau_red, T)
 end
 
 # For g = 6 the curve may be a plane quintic (kappa: the odd characteristic
@@ -68,15 +66,18 @@ function _plane_quintic_safe_basis(g::Int, thetas, tau, T; rhos = nothing, fay_r
 end
 
 # The theta constants in the basis changed by the symplectic matrix M
-# (characteristics as in _igusa_action), with tau and the transformation T
-# (M tau = Hecke.siegel_transform(M, tau); theta constants by FLINT) if tau is
-# known, otherwise by Igusa's transformation formula (up to a common factor).
+# (characteristics as in _igusa_action) by Igusa's transformation formula, up
+# to a common factor (all steps of the reconstruction are projective in the
+# theta constants), without recomputing them (in genus 6 that is most of the
+# time of a reconstruction); with tau and the transformation T if tau is
+# known (M tau = Hecke.siegel_transform(M, tau)).
 function _moved_basis(M::Matrix{Int}, thetas, tau, T)
-  tau === nothing && return _transform_theta_constants(thetas, M, _genus_of_thetas(thetas)), nothing, nothing
+  moved = _transform_theta_constants(thetas, M, _genus_of_thetas(thetas))
+  tau === nothing && return moved, nothing, nothing
   MZ = matrix(ZZ, M)
   tau2 = Hecke.siegel_transform(MZ, tau)
   tau2 = (tau2 + transpose(tau2)) * inv(base_ring(tau2)(2))
-  return theta_constants(tau2), tau2, MZ * T
+  return moved, tau2, MZ * T
 end
 
 # The theta constants of the Prym for eta = (0..0; 1 0..0) are the products
