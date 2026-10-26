@@ -36,6 +36,7 @@
     "Reconstruction/ThetaCharacteristics.jl",
     "Reconstruction/SignCorrection.jl",
     "Reconstruction/Hyperelliptic.jl",
+    "Reconstruction/Thomae.jl",
     "Reconstruction/PlaneQuinticsAndCubicThreefolds.jl",
     "Reconstruction/CurveReconstruction.jl",
   ]

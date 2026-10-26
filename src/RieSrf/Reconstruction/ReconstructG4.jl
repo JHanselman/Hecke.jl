@@ -113,17 +113,8 @@ function _g4_hyperelliptic(th, vanishing)
   return hyperelliptic_curve(f), (rosenhain = lambdas,)
 end
 
-# The Rosenhain invariants lambda_3..lambda_9
-function _g4_rosenhain(th, vanishing)
-  # eta_1..eta_10 and U (containing 10, of size 5) from the pattern of the
-  # vanishing theta constants (Hyperelliptic.jl). (Taking eta_i = v_i + v_10
-  # for the sorted vanishing v_i and U from the parities of the eta_i gives
-  # the right eta_U, but U itself can have the wrong size, and then Takase's
-  # quotients are wrong.)
-  eta, U = _hyperelliptic_eta(4, th, vanishing)
-  thetas_sq = Dict(ch => x^2 for (ch, x) in th)
-  return [_takase_quotient(thetas_sq, eta, U, 1, l, 2) for l in 3:9]
-end
+# The Rosenhain invariants lambda_3..lambda_9 (Hyperelliptic.jl)
+_g4_rosenhain(th, vanishing) = _rosenhain_invariants(4, th, vanishing)
 
 ################################################################################
 #
