@@ -36,7 +36,8 @@
 # The Taylor coefficients at z = 0 of theta[e; 0](z, tau2) for all e in
 # {0,1}^g (rows, in the order of Iterators.product, e[1] fastest) of the
 # given degrees (columns: _exponent_vectors(g, d) for d in degrees, in this
-# order). One acb_theta_jet call per characteristic.
+# order). One acb_theta_jet call per characteristic, in parallel over the
+# Julia threads (start Julia with -t).
 function _second_order_theta_jets(tau2::AcbMatrix, degrees::Vector{Int})
   g = nrows(tau2)
   CC = base_ring(tau2)
@@ -49,21 +50,21 @@ function _second_order_theta_jets(tau2::AcbMatrix, degrees::Vector{Int})
   position = Dict(tuples[g*(k-1)+1:g*k] => k for k in 1:n)
   monomials = reduce(vcat, [_exponent_vectors(g, d) for d in degrees])
   chars = [collect(e) for e in Iterators.product(ntuple(_ -> 0:1, g)...)]
-  J = zero_matrix(CC, length(chars), length(monomials))
-  zs = acb_vec([zero(CC) for _ in 1:g])
-  jets = acb_vec(n)
-  for (r, e) in enumerate(chars)
+  rows = Vector{Vector{AcbFieldElem}}(undef, length(chars))
+  Threads.@threads for r in eachindex(chars)
+    e = chars[r]
     ab = UInt(Hecke.parse_theta_characteristic([e; zeros(Int, g)]))
+    zs = acb_vec([zero(CC) for _ in 1:g])
+    jets = acb_vec(n)
     ccall((:acb_theta_jet, libflint), Nothing,
           (Ptr{acb_struct}, Ptr{acb_struct}, Int, Ref{AcbMatrix}, Int, UInt, Cint, Cint, Int),
           jets, zs, 1, tau2, order, ab, 0, 0, prec)
     values = array(CC, jets, n)
-    for (c, m) in enumerate(monomials)
-      J[r, c] = values[position[m]]
-    end
+    acb_vec_clear(jets, n)
+    acb_vec_clear(zs, g)
+    rows[r] = [values[position[m]] for m in monomials]
   end
-  acb_vec_clear(jets, n)
-  acb_vec_clear(zs, g)
+  J = matrix(CC, length(chars), length(monomials), [x for row in rows for x in row])
   return J, monomials
 end
 
