@@ -15,7 +15,7 @@ export riemann_surface, RiemannSurface, genus, precision, embedding,
        approximate_minimal_polynomial, algebraize_element, endomorphism_structure,
        integral_left_kernel,
        reconstruct_curve, reconstruct_quadrics, reconstruct_cubic_threefold,
-       reconstruct_plane_quintic, reconstruct_hyperelliptic_curve, prym_quadrics
+       reconstruct_plane_quintic, reconstruct_hyperelliptic_curve, prym_quadrics, dubrovin_quartics
 
 
 import Hecke.AbstractAlgebra, Hecke.Nemo
@@ -70,4 +70,5 @@ include("RieSrf/Reconstruction/Quadrics.jl")
 include("RieSrf/Reconstruction/Hyperelliptic.jl")
 include("RieSrf/Reconstruction/PlaneQuinticsAndCubicThreefolds.jl")
 include("RieSrf/Reconstruction/CurveReconstruction.jl")
+include("RieSrf/Reconstruction/Dubrovin.jl")
 end

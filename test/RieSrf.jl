@@ -38,6 +38,7 @@
     "Reconstruction/Hyperelliptic.jl",
     "Reconstruction/PlaneQuinticsAndCubicThreefolds.jl",
     "Reconstruction/CurveReconstruction.jl",
+    "Reconstruction/Dubrovin.jl",
   ]
     Hecke._include_test(joinpath(@__DIR__, "RieSrf", file))
   end
