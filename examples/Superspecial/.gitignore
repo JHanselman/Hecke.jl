@@ -1,0 +1,13 @@
+# outputs of the runs
+*.state
+*.state.tmp
+*.jls
+*.jls.tmp
+bfs_p*_g*.txt
+bfs_p*_g*.txt.tmp
+bfs_p*_g*.txt.jacobians
+bfs_p*_g*.DONE
+*.log
+ss-*.out
+ss-*.err
+superspecial_p*_g*.txt*
