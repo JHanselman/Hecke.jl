@@ -143,7 +143,7 @@ function _rosenhain_invariants(g::Int, thetas, vanishing)
   moved = _transform_theta_constants(thetas, M, g)
   prec = precision(parent(first(values(thetas))))
   zero_set = Set(_vanishing_even_theta_constants(moved, prec))
-  expected = Set(Tuple(_f2(sum(standard[i] for i in symdiff(U_standard, S)))) for S in _subsets(2*g + 2, g + 1))
+  expected = Set(Tuple(_f2(sum((standard[i] for i in symdiff(U_standard, S)); init = zeros(Int, 2*g)))) for S in _subsets(2*g + 2, g + 1))
   @req all(c -> !_is_even(c) || ((c in expected) == !(c in zero_set)), keys(moved)) "The theta constants in Mumford's basis do not have the expected vanishing pattern."
   thetas_sq = Dict(c => v^2 for (c, v) in moved)
   return [_takase_quotient(thetas_sq, standard, U_standard, 1, l, 2) for l in 3:2*g+1]

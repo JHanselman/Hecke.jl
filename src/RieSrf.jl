@@ -15,7 +15,9 @@ export riemann_surface, RiemannSurface, genus, precision, embedding,
        approximate_minimal_polynomial, algebraize_element, endomorphism_structure,
        integral_left_kernel,
        reconstruct_curve, reconstruct_quadrics, reconstruct_cubic_threefold,
-       reconstruct_plane_quintic, reconstruct_hyperelliptic_curve, prym_quadrics, dubrovin_quartics
+       reconstruct_plane_quintic, reconstruct_hyperelliptic_curve, prym_quadrics, dubrovin_quartics,
+       thomae_theta_constants, second_order_theta_constants, theta_squares_relations_hold,
+       rosenhain_invariants_from_theta_squares
 
 
 import Hecke.AbstractAlgebra, Hecke.Nemo
@@ -68,6 +70,7 @@ include("RieSrf/Reconstruction/ReconstructG4Tables.jl")
 include("RieSrf/Reconstruction/ReconstructG4.jl")
 include("RieSrf/Reconstruction/Quadrics.jl")
 include("RieSrf/Reconstruction/Hyperelliptic.jl")
+include("RieSrf/Reconstruction/Thomae.jl")
 include("RieSrf/Reconstruction/PlaneQuinticsAndCubicThreefolds.jl")
 include("RieSrf/Reconstruction/CurveReconstruction.jl")
 include("RieSrf/Reconstruction/Dubrovin.jl")
